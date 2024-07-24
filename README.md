@@ -158,6 +158,32 @@ Tested on an AMD EPYC 9334 2.7 GHz CPU on `analysis.sns.gov` cluster. For refere
 ---
 
 ## `EAM/`: Incorporating the EAM forcefield to benchmark the Al adatom toy model
+### `test_ABC_J.ipynb`: The pure Julia based ABC simulator function, calls `/src/juliaEAM.jl` for evaluating the EAM interaction
+
+Updates: 
+
+Ongoing
+- [ ] Asymmetrical penalty
+- [ ] Using ABC to study vacancy diffusion problem
+- [ ] Improving visualization
+
+Done
+- [x] Assigning the penalty energy only on focused particles
+- [x] Using energy difference as termination condition in minimization algorithm
+- [x] FIRE algorithm and MD-downhill energyminimization
+- [x] Slightly distort BC to create asymmetry
+- [x] Pre-evaluating the gradient of gaussian penalty for efficiency
+- [x] Truncating the penalty function to $3 \sigma$
+- [x] Setting intervals between neighbor list identification for improved efficiency
+- [x] Pushing the system slightly before minimization to prevent trapping on flat top PEL
+
+Failed
+- [x] ~~Using momentum gradient descent algorithm for structural relaxation~~
+- [x] ~~Not updating structure if force does not converge~~
+
+---
+
+### Previous testings
 
 ### `test_minimize.ipynb`: Integrating the EAM forcefield for metallic element interactions from the Python [ASE](https://gitlab.com/ase/ase) package into the Molly system/simulator framework
 
@@ -168,18 +194,6 @@ Tested on an AMD EPYC 9334 2.7 GHz CPU on `analysis.sns.gov` cluster. For refere
 ### `test_JuliaEAM.ipynb`: Calculating EAM interactions using Julia
 
 ![JuliaEAM](https://github.com/ch-tung/ABCD_J/blob/389a2293c5a2f5351905167a624ee9843e1ae479/JuliaEAM.png?raw=true)
-
----
-
-### `test_ABC_J.ipynb`: The pure Julia based ABC simulator function, calls `/src/juliaEAM.jl` for evaluating the EAM interaction
-
-Updates: 
-
-*   Using momentum gradient descent algorithm for structural relaxation
-*   Pre-evaluating the gradient of gaussian penalty
-*   Truncating the penalty function to $3 \sigma$
-*   Setting intervals between neighbor list identification for improved efficiency
-*   Pushing the system slightly before minimization to prevent trapping on flat top PEL
 
 ---
 
