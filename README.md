@@ -172,10 +172,11 @@ Done
 - [x] Using energy difference as termination condition in minimization algorithm
 - [x] FIRE algorithm and MD-downhill energyminimization
 - [x] Slightly distort BC to create asymmetry
-- [x] Pre-evaluating the gradient of gaussian penalty for efficiency
+- [x] Pre-evaluating the gradient of Gaussian penalty for efficiency
 - [x] Truncating the penalty function to $3 \sigma$
 - [x] Setting intervals between neighbor list identification for improved efficiency
 - [x] Pushing the system slightly before minimization to prevent trapping on flat top PEL
+- [x] Fixed PBC issues on calculating Gaussian penalty
 
 Failed
 - [x] ~~Using momentum gradient descent algorithm for structural relaxation~~
