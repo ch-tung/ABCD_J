@@ -155,9 +155,64 @@ time/atom/step by my EAM calculator: 4.7440777693101735e-6 seconds
 
 Tested on an AMD EPYC 9334 2.7 GHz CPU on `analysis.sns.gov` cluster. For reference, the serial LAMMPS EAM calculator takes 1.85e-6 CPU seconds per atom per step for energy calculation on 3.47 GHz Intel Xeon processors. ([reference](frozen_atoms))
 
+### `lammpsIO.jl`: Read/Write LAMMPS dump file
+
+**Example:**
+```julia
+# Read dump file and create molly system
+filename_dump = "./test.dump"
+n_atoms, box_size, coords_molly = lmpDumpReader(filename_dump)
+molly_atoms = [Molly.Atom(index=i, charge=0, mass=atom_mass) for i in 1:length(coords_molly)]
+boundary_condition = Molly.CubicBoundary(box_size[1],box_size[2],box_size[3])
+
+# Write dump file during simulation
+fname_dump = "./test_out.dump"
+open(fname_dump, "w") do file
+    write(file, "")
+end
+
+open(fname_dump, "w") do file
+    for step_n in 1:n_steps
+    
+        #####################
+        # Update trajectory #
+        #####################
+    
+        if step_n >= start_dump
+            if step_n % dump_inteval == 0
+                lmpDumpWriter(file,step_n,molly_system,fname_dump)
+            end
+        end
+    end
+end
+```
+
 ---
 
 ## `EAM/`: Incorporating the EAM forcefield to benchmark the Al adatom toy model
+### `test_MD.ipynb`: A fundamental verification of the current Julia simulation code to ensure all basic components are functioning correctly.
+https://hackmd.io/MAK4jYY2SqqeRpFzVath-A?both
+#### Modifications
+- Modified the Julia ABC simulator for MD simulation by:
+  - Removing the penalty function.
+  - Employing the Velocity Verlet algorithm.
+  - MB-Random velocity generator.
+#### Benchmark Procedure
+1. **Initialization**: Start from an FCC crystal Al and randomly assign velocities following the Maxwell-Boltzmann distribution at 2000K.
+2. **Volume Adjustment**: Run for 50,000 steps (20 ps) in NPT ensemble.
+3. **Reset Velocity**: Randomly assign velocities following the Maxwell-Boltzmann distribution at 2000K.
+4. **Equilibration**: Run for 20,000 steps (20 ps) in NVE. The result temperature fluctuates around 1200K (melting temperature of Al is 933.47K).
+5. **Trajectory Collection**: Collect trajectory data for 10,000 steps after equilibration to calculate Mean Squared Displacement (MSD).
+![image](https://hackmd.io/_uploads/H1A-bxWcC.png)
+![test_Julia_MD](https://hackmd.io/_uploads/ByNCIgbqR.gif)
+Example: Particle motion at 140K for 0.2ps
+
+### `test_ABC_J_vacancy.ipynb`: Developing the ABC code and verify its accuracy by checking the vacancy migration energy in aluminum
+![image](https://hackmd.io/_uploads/H18xrcMqR.png)
+
+![test_Al_vacancy](https://github.com/user-attachments/assets/e012e5f2-ba05-49de-b502-6369fe3f4646)
+
+
 ### `test_ABC_J.ipynb`: The pure Julia based ABC simulator function, calls `/src/juliaEAM.jl` for evaluating the EAM interaction
 
 Updates: 
