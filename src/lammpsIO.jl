@@ -35,13 +35,15 @@ function lmpDumpReader(filename_dump)
     end
     id = zeros(Int,n_atoms)
     coords = []
+    attypes = []
     for i_atoms in 1:n_atoms
         data_atoms = [parse(Float64,d) for d in data[i_atoms+9]]
         id[i_atoms] = data_atoms[1]
         push!(coords, data_atoms[3:5]-box_origin)
+        push!(attypes, Int(data_atoms[2]))
     end
     coords_molly = [SVector{3}(c*1u"Å") for c in coords]
-    return n_atoms, box_size, coords_molly
+    return n_atoms, box_size, coords_molly, attypes
 end
 
 """
@@ -67,7 +69,29 @@ function lmpDumpWriter(file,timestep,sys,fname_dump)
     write(file, "0 "*string(ustrip(sys.boundary[3]))*"\n")
     write(file, "ITEM: ATOMS id type xu yu zu\n")
     for (i_c, coord) in enumerate(sys.coords)
-        write(file, string(i_c)*" 1 "*join(ustrip(coord)," ")*"\n")
+        atomdata = sys.atoms_data[i_c]
+        write(file, string(i_c)*" "*string(atomdata.atom_type)*" "*join(ustrip(coord)," ")*"\n")
+    end
+    # end
+end
+
+function lmpDataWriter(file,timestep,sys,fname_dump)
+    # open(fname_dump, "a") do file
+    n_types = length(unique([ad.atom_type for ad in molly_system.atoms_data]))
+    write(file, "# LAMMPS data file written by lammpsIO.jl\n")       #1
+    write(file, "\n")                                                #2
+    write(file, string(length(sys.coords))*" atoms\n")               #3
+    write(file, string(n_types)*" atom types\n")                     #4
+    write(file, "\n")                                                #5
+    write(file, "0 "*string(ustrip(sys.boundary[1]))*" xlo xhi\n")   #6
+    write(file, "0 "*string(ustrip(sys.boundary[2]))*" ylo yhi\n")   #7
+    write(file, "0 "*string(ustrip(sys.boundary[3]))*" zlo zhi\n")   #8
+    write(file, "\n")                                                #9
+    write(file, "Atoms  # atomic\n")                                 #10
+    write(file, "\n")                                                #11
+    for (i_c, coord) in enumerate(sys.coords)
+        atomdata = sys.atoms_data[i_c]
+        write(file, string(i_c)*" "*string(atomdata.atom_type)*" "*join(ustrip(coord)," ")*"\n")
     end
     # end
 end
