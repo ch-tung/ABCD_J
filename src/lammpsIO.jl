@@ -75,6 +75,17 @@ function lmpDumpWriter(file,timestep,sys,fname_dump)
     # end
 end
 
+"""
+    lmpDataWriter(file, timestep, sys, fname_dump)
+
+Write LAMMPS data file.
+
+# Arguments
+- `file::IO`: The file object to write the data to.
+- `timestep::Int`: The timestep of the simulation.
+- `sys::System`: The system object containing the coordinates and atom data.
+- `fname_dump::String`: The name of the dump file.
+"""
 function lmpDataWriter(file,timestep,sys,fname_dump)
     # open(fname_dump, "a") do file
     n_types = length(unique([ad.atom_type for ad in molly_system.atoms_data]))
