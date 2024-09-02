@@ -1,0 +1,35 @@
+# LAMMPS input script for Al FCC 6x6x6 crystal
+
+# Initialize simulation
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+
+# Create the crystal lattice
+lattice fcc 4.05
+region box block 0 6 0 6 0 10
+create_box 1 box
+create_atoms 1 box
+
+# remove atom
+region 1 block 4.9 5.1 4.9 5.1 8.9 9.1
+delete_atoms region 1 compress yes
+
+# Set atom type and mass
+mass 1 26.9815
+
+# Define interatomic potential
+pair_style eam/alloy
+pair_coeff * * Al99.eam.alloy Al
+
+# Perform energy minimization
+fix 1 all box/relax iso 0.0 vmax 0.001
+minimize 1e-8 1e-8 1000 10000
+
+# Dump
+reset_timestep 0
+dump 0 all custom 1 ./out_vacancy_tall.dump id type xu yu zu
+dump_modify 0 sort id 
+run 0
+undump 0
