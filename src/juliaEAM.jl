@@ -5,17 +5,17 @@ Pkg.activate(".")
 
 using Printf
 using AtomsCalculators
-using ASEconvert # use this PR:https://github.com/mfherbst/ASEconvert.jl/pull/17, Pkg.add(url="https://github.com/tjjarvinen/ASEconvert.jl.git", rev="atomscalculators")
+# using ASEconvert # use this PR:https://github.com/mfherbst/ASEconvert.jl/pull/17, Pkg.add(url="https://github.com/tjjarvinen/ASEconvert.jl.git", rev="atomscalculators")
 using Unitful: Å, nm
-using PythonCall
-ENV["PYTHON"] = "/SNS/users/ccu/miniconda3/envs/analysis/bin/python"
+# using PythonCall
+# ENV["PYTHON"] = "/SNS/users/ccu/miniconda3/envs/analysis/bin/python"
 # install the following packages in julia REPL
 # using CondaPkg
 # CondaPkg.add_pip("IPython")
 # CondaPkg.add_pip("nglview")
 using StaticArrays: SVector
 
-using GLMakie
+# using GLMakie
 using Molly
 using Zygote
 using LinearAlgebra
