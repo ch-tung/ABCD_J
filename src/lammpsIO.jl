@@ -106,3 +106,70 @@ function lmpDataWriter(file,timestep,sys,fname_dump)
     end
     # end
 end
+
+"""
+    lmpDumpWriter_prop(file, timestep, sys, fname_dump, property)
+
+Write atomic data to a LAMMPS dump file with additional property.
+
+# Arguments
+- `file`: The file object to write the data to.
+- `timestep`: The current timestep.
+- `sys`: The system object containing atomic coordinates and properties.
+- `fname_dump`: The filename of the dump file.
+- `property`: An array of additional properties for each atom.
+"""
+function lmpDumpWriter_prop(file,timestep,sys,fname_dump,property)
+    # open(fname_dump, "a") do file
+    write(file, "ITEM: TIMESTEP\n")
+    write(file, string(timestep)*"\n")
+    write(file, "ITEM: NUMBER OF ATOMS\n")
+    write(file, string(length(sys.coords))*"\n")
+    write(file, "ITEM: BOX BOUNDS pp pp pp\n")
+    write(file, "0 "*string(ustrip(sys.boundary[1]))*"\n")
+    write(file, "0 "*string(ustrip(sys.boundary[2]))*"\n")
+    write(file, "0 "*string(ustrip(sys.boundary[3]))*"\n")
+    write(file, "ITEM: ATOMS id type xu yu zu property\n")
+    for (i_c, coord) in enumerate(sys.coords)
+        atomdata = sys.atoms_data[i_c]
+        write(file, string(i_c)*" "*string(atomdata.atom_type)*" "*join(ustrip(coord)," ")*" "*string(property[i_c])*"\n")
+    end
+    # end
+end
+
+"""
+    lmpDataWriter_prop(file, timestep, sys, fname_dump, property)
+
+Write atomic data to a LAMMPS dump file with additional property.
+
+# Arguments
+- `file`: The file object to write the data to.
+- `timestep`: The current timestep.
+- `sys`: The system object containing atomic coordinates and properties.
+- `fname_dump`: The filename of the dump file.
+- `property`: An array of additional properties for each atom.
+"""
+function lmpDataWriter_prop(file,timestep,sys,fname_dump,property)
+    # open(fname_dump, "a") do file
+    n_types = length(unique([ad.atom_type for ad in molly_system.atoms_data]))
+    write(file, "# LAMMPS data file written by lammpsIO.jl\n")       #1
+    write(file, "\n")                                                #2
+    write(file, string(length(sys.coords))*" atoms\n")               #3
+    write(file, string(n_types)*" atom types\n")                     #4
+    write(file, "\n")                                                #5
+    write(file, "0 "*string(ustrip(sys.boundary[1]))*" xlo xhi\n")   #6
+    write(file, "0 "*string(ustrip(sys.boundary[2]))*" ylo yhi\n")   #7
+    write(file, "0 "*string(ustrip(sys.boundary[3]))*" zlo zhi\n")   #8
+    write(file, "\n")                                                #9
+    write(file, "Atoms  # atomic\n")                                 #10
+    write(file, "\n")                                                #11
+    for (i_c, coord) in enumerate(sys.coords)
+        atomdata = sys.atoms_data[i_c]
+        write(file, string(i_c)*" "*string(atomdata.atom_type)*" "*join(ustrip(coord)," ")*" "*string(property[i_c])*"\n")
+    end
+    # end
+end
+
+
+
+

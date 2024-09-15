@@ -468,3 +468,182 @@ function calculate_forces(eam::EAM, coords::Vector{SVector{3, Float64}}, boundar
 
     return [SVector{3,Float64}(forces_particle[idx_f,:]) for idx_f in 1:size(forces_particle)[1]]*u"eV/Å"
 end
+
+"""
+    calculate_atomstress(eam::EAM, sys::Molly.System, neighbors_all::Vector{Vector{Int}})
+    
+Calculate the atomic stress for a given EAM potential, system, and neighbor list.
+
+# Arguments
+- `eam::EAM`: The EAM potential.
+- `sys::Molly.System`: The system.
+- `neighbors_all::Vector{Vector{Int}}`: The neighbor list for each atom.
+
+# Returns
+- `stresses_particle::Array{Float64, 3}`: The atomic stress tensor for each atom.
+
+"""
+function calculate_atomstress(eam::EAM, sys::Molly.System, neighbors_all::Vector{Vector{Int}})
+    coords = [ustrip(coord) for coord in sys.coords]
+    boundary = @SVector [ustrip(sys.boundary[i]) for i in 1:3]
+    return calculate_atomstress(eam, coords, boundary, neighbors_all)
+end
+
+"""
+    calculate_atomstress(eam::EAM, coords::Vector{SVector{3, Float64}}, boundary::SVector{3, Float64}, neighbors_all::Vector{Vector{Int}})
+    
+Calculate the atomic stress for a given EAM potential, coordinates, boundary, and neighbor list.
+
+# Arguments
+- `eam::EAM`: The EAM potential.
+- `coords::Vector{SVector{3, Float64}}`: The coordinates of the atoms.
+- `boundary::SVector{3, Float64}`: The boundary of the system.
+- `neighbors_all::Vector{Vector{Int}}`: The neighbor list for each atom.
+
+# Returns
+- `stresses_particle::Array{Float64, 3}`: The atomic stress tensor for each atom.
+
+"""
+function calculate_atomstress(eam::EAM, coords::Vector{SVector{3, Float64}}, boundary::SVector{3, Float64}, neighbors_all::Vector{Vector{Int}})
+    n_threads::Int = 1
+    
+    ## for single element system, only one type is considered
+    typelist::Vector{Int} = [1]
+    i_type::Int = 1 in typelist ? indexin(1, typelist)[1] : error("1 not found in typelist")
+    d_electron_density_i = eam.d_electron_density[i_type]
+    
+    # preallocate
+    # initialize forces_particle
+    # forces_particle::Matrix{Float64} = zeros(length(coords),3)
+    stresses_particle::Array{Float64, 3} = zeros(length(coords), 3, 3)
+    
+    # initialize total_density
+    total_density::Vector{Float64} = zeros(length(coords))
+
+    r_all::Vector{Matrix{Float64}} = []
+    d_all::Vector{Vector{Float64}} = []
+
+    n_neighbors_all::Vector{Int} = [length(neighbors_all[i]) for i in 1:length(coords)]
+    n_neighbors_max::Int = maximum(n_neighbors_all)
+
+    r_i::Matrix{Float64} = zeros(n_neighbors_max,3)
+    d_i::Vector{Float64} = zeros(n_neighbors_max)
+    for i::Int in 1:length(coords)
+        # i_type::Int = indexin(1, typelist)[1]
+        
+        # neighbors = get_neighbors(neig, i)
+        neighbors::Vector{Int} = neighbors_all[i]    
+        if isempty(neighbors)
+            continue
+        end
+
+        n_neighbors::Int = length(neighbors)
+        coords_i = coords[i]
+    
+        # distance between atom i and its neighbors
+        # r_i::Matrix{Float64} = zeros(n_neighbors,3)
+        # d_i::Vector{Float64} = zeros(n_neighbors)
+        for (index_j::Int, j::Int) in enumerate(neighbors)
+            r_ij = (vector(coords_i, coords[j], boundary)) # Å
+            d_ij = sqrt(sum(r_ij.^2))
+            r_i[index_j,1:3] = r_ij
+            d_i[index_j] = minimum((d_ij,eam.r[end]))
+        end
+
+        push!(r_all, r_i[1:n_neighbors,1:3])
+        push!(d_all, d_i[1:n_neighbors])
+    
+        for j_type::Int in 1:eam.Nelements # iterate over all types
+            # use = get_type(neighbors, typelist) .== j_type # get the index of the neighbors with type j
+            # if !any(use)
+            #     continue
+            # end
+            # d_use = d_i[use]
+            d_use = d_all[i]
+    
+            density = sum(eam.electron_density[j_type].(d_use)) # electron density
+            total_density[i] += density # total electron density around atom i
+        end
+    end
+    
+    # calculate stresses on particles
+    for i::Int in 1:length(coords)
+        # i_type::Int = indexin(1, typelist)[1]
+            
+        # neighbors = get_neighbors(neig, i)
+        neighbors::Vector{Int} = neighbors_all[i]
+        if isempty(neighbors)
+            continue
+        end
+        n_neighbors::Int = length(neighbors)
+        coords_i = coords[i]
+    
+        r_i = r_all[i]
+        d_i = d_all[i]
+        
+        # derivative of the embedded energy of atom i
+        d_embedded_energy_i::Float64 = eam.d_embedded_energy[i_type].(total_density[i])
+    
+        ur_i = r_i
+    
+        # unit directional vector
+        ur_i ./= d_i
+        
+        sigma_i::Matrix{Float64} = zeros(3, 3)
+        for j_type::Int in 1:eam.Nelements
+            # use = get_type(neighbors, typelist) .== j_type # get the index of the neighbors with type j
+            # if !any(use)
+            #     continue
+            # end
+            # r_use = r_i[use]
+            # d_use = d_i[use]
+            # ur_use = ur_i[use, :]
+            # neighbors_use = neighbors[use]
+            r_use = r_i
+            d_use = d_i
+            ur_use::Matrix{Float64} = ur_i[:,:]
+            neighbors_use = neighbors
+    
+            total_density_j = total_density[neighbors_use]
+            
+            scale::Vector{Float64} = eam.d_phi[i_type, j_type].(d_use)
+            scale .+= (d_embedded_energy_i .* eam.d_electron_density[j_type].(d_use)) 
+            scale .+= (eam.d_embedded_energy[j_type].(total_density_j) .* d_electron_density_i.(d_use))
+            
+            # forces_particle[i, :] .+= (ur_use' * scale) # get pairwise force here
+            forces_particle_ij = ur_use .* scale
+            # print(size(forces_particle_ij))
+
+            # Calculate the outer product and add it to the stress tensor
+            for j in 1:size(forces_particle_ij, 1)
+                sigma_i .+= r_i[j, :] * transpose(forces_particle_ij[j, :])
+            end
+            stresses_particle[i,:,:] = sigma_i
+        end
+    end
+
+    return stresses_particle
+end
+
+"""
+    f_vm_stress(stresses)
+
+Compute the von Mises stress for each stress tensor in the input array.
+
+# Arguments
+- `stresses::Array{Float64, 3}`: An array of stress tensors. Each stress tensor is a 3x3 matrix.
+
+# Returns
+- `vm_stress::Array{Float64, 1}`: An array of von Mises stresses.
+"""
+function f_vm_stress(stresses)
+    vm_stress = zeros(size(stresses)[1])
+    for i in 1:size(stresses)[1]
+        σ = stresses[i, :, :]
+        σ_xx, σ_yy, σ_zz = σ[1, 1], σ[2, 2], σ[3, 3]
+        σ_xy, σ_yz, σ_zx = σ[1, 2], σ[2, 3], σ[3, 1]
+        vm_stress[i] = sqrt(0.5 * ((σ_xx - σ_yy)^2 + (σ_yy - σ_zz)^2 + (σ_zz - σ_xx)^2 + 6*(σ_xy^2 + σ_yz^2 + σ_zx^2)))
+    end 
+
+    return vm_stress
+end
