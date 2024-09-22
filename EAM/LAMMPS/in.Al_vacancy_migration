@@ -1,0 +1,50 @@
+# Initialize simulation
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+
+# Create the crystal lattice
+lattice fcc 4.05
+region box block 0 7 0 7 0 7
+create_box 1 box
+create_atoms 1 box
+
+# remove atom
+region 1 block 3.9 4.1 3.9 4.1 3.9 4.1
+delete_atoms region 1 compress yes
+
+# Set atom type and mass
+mass 1 26.9815
+
+# Define interatomic potential
+pair_style eam/alloy
+pair_coeff * * Al99.eam.alloy Al
+
+# Perform energy minimization
+fix 1 all box/relax iso 0.0 vmax 0.001
+minimize 1e-8 1e-8 1000 10000
+
+# Dump
+reset_timestep 0
+dump 0 all custom 1 ./out_vacancy_cube8.dump id type xu yu zu
+dump_modify 0 sort id 
+run 0
+undump 0
+
+# Assign random velocities
+velocity all create ${temp} 12345 rot yes mom yes dist gaussian
+
+# Perform NVT run
+fix 2 all nvt temp ${temp} ${temp} 0.1
+fix 3 all momentum 1000 linear 1 1 1
+
+run 100000
+
+reset_timestep 0
+dump 1 all custom 1000 ./out_vacancy_cube8_${temp}.dump id type xu yu zu
+dump_modify 1 sort id 
+thermo 10000
+run 100000000
+
+undump 1
