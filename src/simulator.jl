@@ -1,7 +1,3 @@
-using Unitful: Å, nm
-using StaticArrays: SVector
-using Molly
-
 ### Define `Molly` style ABCSimulator
 # Define the ABCSimulator structure
 """
