@@ -6,7 +6,7 @@ atom_style atomic
 
 # Create the crystal lattice
 lattice fcc 4.05
-region box block 0 7 0 7 0 7
+region box block 0 8 0 8 0 8
 create_box 1 box
 create_atoms 1 box
 
