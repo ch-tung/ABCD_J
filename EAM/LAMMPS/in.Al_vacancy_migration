@@ -44,7 +44,7 @@ run 100000
 reset_timestep 0
 dump 1 all custom 1000 ./out_vacancy_cube8_${temp}.dump id type xu yu zu
 dump_modify 1 sort id 
-thermo 10000
+thermo 1000000
 run 100000000
 
 undump 1
