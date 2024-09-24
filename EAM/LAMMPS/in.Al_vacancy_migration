@@ -24,6 +24,7 @@ pair_coeff * * Al99.eam.alloy Al
 # Perform energy minimization
 fix 1 all box/relax iso 0.0 vmax 0.001
 minimize 1e-8 1e-8 1000 10000
+unfix 1
 
 # Dump
 #reset_timestep 0
@@ -33,16 +34,18 @@ minimize 1e-8 1e-8 1000 10000
 #undump 0
 
 # Assign random velocities
-velocity all create ${temp} 12345 rot yes mom yes dist gaussian
+# velocity all create ${temp} 12345 rot yes mom yes dist gaussian
+fix 2 all nvt temp 1 ${temp} 0.1
+fix 3 all momentum 1000 linear 1 1 1
+unfix 2
+run 100000
 
 # Perform NVT run
-fix 2 all nvt temp ${temp} ${temp} 0.1
-fix 3 all momentum 1000 linear 1 1 1
-
+fix 4 all nvt temp ${temp} ${temp} 0.1
 run 100000
 
 reset_timestep 0
-dump 1 all custom 1000 ./out_vacancy_cube8_${temp}.dump id type xu yu zu
+dump 1 all custom 10000 ./out_vacancy_cube8_${temp}_lt.dump id type xu yu zu
 dump_modify 1 sort id 
 thermo 1000000
 run 100000000
