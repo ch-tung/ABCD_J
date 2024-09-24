@@ -1,7 +1,8 @@
 ENV["CELLLISTMAP_8.3_WARNING"] = "false"
+ENV["JULIA_NUM_THREADS"] = 4
 
-using Pkg
-Pkg.activate(".")
+# using Pkg
+# Pkg.activate(".")
 
 using Printf
 using AtomsCalculators
@@ -383,7 +384,7 @@ function calculate_forces(eam::EAM, coords::Vector{SVector{3, Float64}}, boundar
 
     r_i::Matrix{Float64} = zeros(n_neighbors_max,3)
     d_i::Vector{Float64} = zeros(n_neighbors_max)
-    for i::Int in 1:length(coords)
+    Threads.@threads for i::Int in 1:length(coords)
         # i_type::Int = indexin(1, typelist)[1]
         
         # neighbors = get_neighbors(neig, i)
@@ -422,7 +423,7 @@ function calculate_forces(eam::EAM, coords::Vector{SVector{3, Float64}}, boundar
     end
     
     # calculate forces on particles
-    for i::Int in 1:length(coords)
+    Threads.@threads for i::Int in 1:length(coords)
         # i_type::Int = indexin(1, typelist)[1]
             
         # neighbors = get_neighbors(neig, i)
