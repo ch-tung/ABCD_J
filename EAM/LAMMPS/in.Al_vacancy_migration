@@ -26,11 +26,11 @@ fix 1 all box/relax iso 0.0 vmax 0.001
 minimize 1e-8 1e-8 1000 10000
 
 # Dump
-reset_timestep 0
-dump 0 all custom 1 ./out_vacancy_cube8.dump id type xu yu zu
-dump_modify 0 sort id 
-run 0
-undump 0
+#reset_timestep 0
+#dump 0 all custom 1 ./out_vacancy_cube8.dump id type xu yu zu
+#dump_modify 0 sort id 
+#run 0
+#undump 0
 
 # Assign random velocities
 velocity all create ${temp} 12345 rot yes mom yes dist gaussian
