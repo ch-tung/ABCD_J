@@ -1,4 +1,3 @@
-### Define `Molly` style ABCSimulator
 # Define the ABCSimulator structure
 """
 In the constructor function ABCSimulator, default values are provided for each of these fields. 
@@ -50,40 +49,64 @@ pbc:    Periodic boundary conditions
 """
 function f_phi_p(x::Vector{SVector{3, typeof(1.0u"Å")}}, x_0, sigma::typeof(1.0u"Å"), W::typeof(1.0u"eV"); nopenalty_atoms=[])
     N::Int = length(x)
-    E_multiplier = ones(length(x))
-    for atom in nopenalty_atoms
-        E_multiplier[atom] = 0
-    end
+    # E_multiplier = ones(length(x))
+    # for atom in nopenalty_atoms
+    #     E_multiplier[atom] = 0
+    # end
+
+    penalty_atoms = setdiff(1:N, nopenalty_atoms)
     
     sigma2_new = sigma^2
-    EDSQ = (A, B) -> sum(sum(map(x -> x.^2, (A-B).*E_multiplier)))
+    EDSQ = (A, B) -> sum(sum(map(x -> x.^2, (A-B))))
     # phi_p = sum([W * exp(-EDSQ(x,c) / (2*sigma2_new)) for c in x_0]) # unit eV
     phi_p = 0.0u"eV"
+    # Threads.@threads 
+    tasks = []
     for c in x_0
-        if EDSQ(x,c)<9*sigma2_new
-            phi_p_individual = W * (exp(-EDSQ(x,c) / (2*sigma2_new)) - exp(-9/2))
-            phi_p += phi_p_individual
+        task = Threads.@spawn begin
+            xp = x[penalty_atoms]
+            cp = c[penalty_atoms]
+            if EDSQ(xp,cp)<9*sigma2_new
+                phi_p_individual = W * (exp(-EDSQ(xp,cp) / (2*sigma2_new)) - exp(-9/2))
+                phi_p += phi_p_individual
+            end
         end
+        push!(tasks, task)
+    end
+    for task in tasks
+        wait(task)
     end
     return phi_p
 end
 
 function grad_f_phi_p(x::Vector{SVector{3, typeof(1.0u"Å")}}, x_0, sigma::typeof(1.0u"Å"), W::typeof(1.0u"eV"); nopenalty_atoms=[])
     N::Int = length(x)
-    E_multiplier = ones(length(x))
-    for atom in nopenalty_atoms
-        E_multiplier[atom] = 0
-    end
+    # E_multiplier = ones(length(x))
+    # for atom in nopenalty_atoms
+    #     E_multiplier[atom] = 0
+    # end
+
+    penalty_atoms = setdiff(1:N, nopenalty_atoms)
 
     sigma2_new = sigma^2
-    EDSQ = (A, B) -> sum(sum(map(x -> x.^2, (A-B).*E_multiplier)))
+    EDSQ = (A, B) -> sum(sum(map(x -> x.^2, (A-B))))
 
     grad_phi_p = [(@SVector zeros(Float64,3))*u"eV/Å" for i in 1:N] # unit eV/Å
+    # Threads.@threads 
+    tasks = []
     for c in x_0
-        if EDSQ(x,c)<9*sigma2_new
-            grad_phi_p_individual = W * exp(-EDSQ(x,c) / (2*sigma2_new)) / (2*sigma2_new) * 2*(c-x).*E_multiplier
-            grad_phi_p += grad_phi_p_individual
+        task = Threads.@spawn begin
+            xp = x[penalty_atoms]
+            cp = c[penalty_atoms]
+            if EDSQ(xp,cp)<9*sigma2_new
+                grad_phi_p_individual = W * exp(-EDSQ(xp,cp) / (2*sigma2_new)) / (2*sigma2_new) * 2*(cp-xp)
+                grad_phi_p[penalty_atoms] += grad_phi_p_individual
+            end
         end
+        push!(tasks, task)
+    end
+    for task in tasks
+        wait(task)
     end
     return grad_phi_p
 end
@@ -308,8 +331,10 @@ function Minimize_MD!(sys::System, sim::ABCSimulator, interaction::EAMInteractio
 
         # energy after move
         E_trial = f_energy_phi(sys, sim, interaction, penalty_coords, neighbors_all, nopenalty_atoms=nopenalty_atoms)
+
         if step_n == 1
         # terminate condition
+            continue
         else 
             deltaE_current = abs(E_trial-E)
             deltaE_1 = abs(E_trial-E_0)
@@ -329,10 +354,6 @@ function Minimize_MD!(sys::System, sim::ABCSimulator, interaction::EAMInteractio
         end
 
     end
-    # neighbors_all = get_neighbors_all(sys)
-    # F = forces(sys, interaction, penalty_coords, sim.sigma, sim.W, neighbors_all, nopenalty_atoms=nopenalty_atoms)
-    # F = F.*F_multiplier
-    # max_force = maximum(norm.(F))
     return sys
 end
 
@@ -341,51 +362,52 @@ end
 """
     simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJulia; 
                n_threads::Integer=Threads.nthreads(), run_loggers::Bool=true, fname::String="output_MD.txt", fname_dump="out.dump", fname_min_dump="out_min.dump",
-               neig_interval::Int=1, loggers_interval=1, dump_interval = 1, start_dump = 1, n_memory = 50,
+               neig_interval::Int=1, loggers_interval::Int=1, dump_interval::Int=1, start_dump::Int=1,
                minimize_only::Bool=false, 
-               d_boost=1.0e-2u"Å", beta=0.0, E_th = sim.W*0.1,
+               d_boost=1.0e-2u"Å", beta=0.0, E_th = sim.W*exp(-3),
                frozen_atoms=[], nopenalty_atoms=[],
-               p_drop=0.0, p_keep=0.5, drop_interval::Int=1)
+               p_drop::Float64=0.0, p_keep=0.5, drop_interval::Int=1, n_memory::Int=50, n_search::Int=60,
+               p_stress::Float64=1e-2)
 
-Simulates the system using the ABC algorithm with molecular dynamics (MD) steps for structural minimization.
+Simulates the system using the ABC algorithm with an EAM interaction potential.
 
 # Arguments
 - `sys::System`: The system to be simulated.
 - `sim::ABCSimulator`: The ABC simulator object.
-- `interaction::EAMInteractionJulia`: The EAM interaction object.
+- `interaction::EAMInteractionJulia`: The EAM interaction potential object.
 
 # Optional Arguments
 - `n_threads::Integer`: The number of threads to use for parallelization. Default is the number of available threads.
 - `run_loggers::Bool`: Whether to run the loggers during the simulation. Default is `true`.
 - `fname::String`: The name of the output file for energy calculation. Default is "output_MD.txt".
-- `fname_dump::String`: The name of the output file for dump data. Default is "out.dump".
-- `fname_min_dump::String`: The name of the output file for minimized dump data. Default is "out_min.dump".
-- `neig_interval::Int`: The interval at which to update the neighbor list. Default is 1.
-- `loggers_interval::Int`: The interval at which to run the loggers. Default is 1.
-- `dump_interval::Int`: The interval at which to dump data. Default is 1.
-- `start_dump::Int`: The step number at which to start dumping data. Default is 1.
-- `memory::Int`: The number of previous coordinates to store for penalty calculation. Default is 50.
+- `fname_dump::String`: The name of the dump file for system configurations. Default is "out.dump".
+- `fname_min_dump::String`: The name of the dump file for minimized system configurations. Default is "out_min.dump".
+- `neig_interval::Int`: The interval for updating the neighbor list. Default is 1.
+- `loggers_interval::Int`: The interval for running the loggers. Default is 1.
+- `dump_interval::Int`: The interval for dumping system configurations. Default is 1.
+- `start_dump::Int`: The step number to start dumping system configurations. Default is 1.
 - `minimize_only::Bool`: Whether to only perform minimization without simulation. Default is `false`.
-- `d_boost::Float`: The boost factor for perturbing the system coordinates. Default is 1.0e-2Å.
-- `beta::Float`: The beta value for the ABC algorithm. Default is 0.0.
-- `E_th::Float`: The threshold energy for penalty calculation. Default is sim.W * exp(-3).
-- `frozen_atoms::Array{Int}`: The indices of atoms to be frozen during minimization. Default is an empty array.
-- `nopenalty_atoms::Array{Int}`: The indices of atoms to be excluded from penalty calculation. Default is an empty array.
-- `p_drop::Float`: The probability of dropping atoms from penalty calculation. Default is 0.0.
-- `p_keep::Float`: The probability of keeping atoms from the previous drop list. Default is 0.5.
-- `drop_interval::Int`: The interval at which to perform atom dropping. Default is 1.
-
-# Returns
-- `sys::System`: The simulated system.
+- `d_boost::Float64`: The boost factor for perturbing the system coordinates. Default is 1.0e-2 Å.
+- `beta::Float64`: The beta value for the ABC algorithm. Default is 0.0.
+- `E_th::Float64`: The threshold energy for convergence. Default is `sim.W*exp(-3)`.
+- `frozen_atoms::Array{Int}`: The indices of the frozen atoms. Default is an empty array.
+- `nopenalty_atoms::Array{Int}`: The indices of the atoms with no penalty. Default is an empty array.
+- `p_drop::Float64`: The probability of dropping an atom during the ABC algorithm. Default is 0.0.
+- `p_keep::Float64`: The probability of keeping an atom during the ABC algorithm. Default is 0.5.
+- `drop_interval::Int`: The interval for dropping atoms during the ABC algorithm. Default is 1.
+- `n_memory::Int`: The number of previous penalty coordinates to store. Default is 50.
+- `n_search::Int`: The number of steps to search for the minimum before clearing the penalty coordinates. Default is 60.
+- `p_stress::Float64`: The percentage of atoms with the top von Mises stress to be penalized. Default is 1e-2.
 """
+
 function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJulia; 
                    n_threads::Integer=Threads.nthreads(), run_loggers::Bool=true, fname::String="output_MD.txt", fname_dump="out.dump", fname_min_dump="out_min.dump",
-                   neig_interval::Int=1, loggers_interval=1, dump_interval = 1, start_dump = 1,
+                   neig_interval::Int=1, loggers_interval::Int=1, dump_interval::Int=1, start_dump::Int=1,
                    minimize_only::Bool=false, 
                    d_boost=1.0e-2u"Å", beta=0.0, E_th = sim.W*exp(-3),
                    frozen_atoms=[], nopenalty_atoms=[],
-                   p_drop=0.0, p_keep=0.5, drop_interval::Int=1, n_memory = 50, n_search=60,
-                   p_stress = 1e-2)
+                   p_drop::Float64=0.0, p_keep=0.5, drop_interval::Int=1, n_memory::Int=50, n_search::Int=60,
+                   p_stress::Float64=1e-2)
     N = length(sys.coords)
     neighbors_all = get_neighbors_all(sys)
     neighbors = find_neighbors(sys, sys.neighbor_finder; n_threads=n_threads)
@@ -445,14 +467,10 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
     n_top = round(Int, p_stress*N)
     nopenalty_atoms_stress = sorted_indices[1:n_top]
 
-    # F = forces(sys, interaction, penalty_coords, sim.sigma, sim.W, neighbors_all, nopenalty_atoms=nopenalty_atoms)
-    # F = F.*d_multiplier
-    # max_force_0 = maximum(norm.(F))
     p = Progress(sim.max_steps)
     step_counter = 0
     dr = sys.coords*0
-    # open(fname_min_dump, "a") do file_min_dump
-        # open(fname_min_data, "a") do file_min_data
+
     for step_n in 1:sim.max_steps
         step_counter += 1
         next!(p)
@@ -470,7 +488,7 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
         ## run the minimization algorithm
         Minimize_MD!(sys, sim, interaction, penalty_coords, neighbors_all; n_threads=n_threads, frozen_atoms=frozen_atoms, neig_interval=neig_interval, mass=26.9815u"u", nopenalty_atoms=nopenalty_atoms_stress)
         E = interaction.f_energy(interaction.calculator, sys, neighbors_all)
-        dr = sys_prev.coords-sys.coords
+        # dr = sys_prev.coords-sys.coords
 
         ## energy after minimization
         # neighbors_all = get_neighbors_all(sys)
@@ -520,18 +538,13 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                     lmpDumpWriter_prop(file_min_dump,step_n-1,sys_prev,fname_min_dump,vm_stress_prev)
                     lmpDumpWriter_prop(file_min_dump,step_n,sys,fname_min_dump,vm_stress)
                 end
-
-                fname_min_data = fname_min_path*"data."*string(step_n,pad=3)
-                fname_min_data_prev = fname_min_path*"data."*string(step_n-1,pad=3)
                 
-                open(fname_min_data, "a") do file_min_data
-                    lmpDataWriter(file_min_data,step_n,sys,fname_min_data)  
-                end
-                open(fname_min_data_prev, "a") do file_min_data
-                    lmpDataWriter(file_min_data,step_n-1,sys_prev,fname_min_data_prev)
-                end
-
-                # lmpDumpWriter(file,step_n,sys,fname_min_dump)
+                # open(fname_min_data, "a") do file_min_data
+                #     lmpDataWriter(file_min_data,step_n,sys,fname_min_data)  
+                # end
+                # open(fname_min_data_prev, "a") do file_min_data
+                #     lmpDataWriter(file_min_data,step_n-1,sys_prev,fname_min_data_prev)
+                # end
 
                 # update penalty list
                 # Get the indices of the particles sorted by von Mises stress in descending order
@@ -569,34 +582,4 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
         # end
     # end
     return sys
-end
-
-### Initialize System and run simulator
-eamJulia = EAMInteractionJulia(eam,calculate_energy,calculate_forces,calculate_atomstress)
-function initialize_system_dump(;loggers=(coords=CoordinateLogger(1),),filename_dump="")
-    n_atoms, box_size, coords_molly, attypes = lmpDumpReader(filename_dump)
-    molly_atoms = [Molly.Atom(index=i, charge=0, mass=atom_mass, 
-                    #   σ=2.0u"Å" |> x -> uconvert(u"nm", x), ϵ=ϵ_kJ_per_mol
-                    ) for i in 1:length(coords_molly)]
-    # Specify boundary condition
-    boundary_condition = Molly.CubicBoundary(box_size[1],box_size[2],box_size[3])
-
-    atom_positions_init = copy(coords_molly)
-    molly_atoms_init = copy(molly_atoms)
-    # Initialize the system with the initial positions and velocities
-    system_init = Molly.System(
-    atoms=molly_atoms_init,
-    atoms_data = [AtomData(element="Al", atom_type=string(attypes[ia])) for (ia,a) in enumerate(molly_atoms_init)],
-    coords=atom_positions_init,  # Ensure these are SVector with correct units
-    boundary=boundary_condition,
-    # loggers=Dict(:kinetic_eng => Molly.KineticEnergyLogger(100), :pot_eng => Molly.PotentialEnergyLogger(100)),
-    neighbor_finder = DistanceNeighborFinder(
-    eligible=trues(length(molly_atoms_init), length(molly_atoms_init)),
-    n_steps=1e3,
-    dist_cutoff=8u"Å"),
-    loggers=loggers,
-    energy_units=u"eV",  # Ensure these units are correctly specified
-    force_units=u"eV/Å"  # Ensure these units are correctly specified
-    )
-    return system_init
 end

@@ -1,5 +1,5 @@
 ENV["CELLLISTMAP_8.3_WARNING"] = "false"
-# ENV["JULIA_NUM_THREADS"] = 4
+ENV["JULIA_NUM_THREADS"] = 4
 
 # using Pkg
 # Pkg.activate(".")
@@ -308,36 +308,42 @@ function calculate_energy(eam::EAM, coords::Vector{SVector{3, Float64}}, boundar
     eam_phi_ix = eam.phi[i_type, :]
 
     # Threads.@threads 
+    tasks = []
     for i::Int in 1:length(coords)
-        # neighbors = get_neighbors(neig, i)
-        neighbors::Vector{Int} = neighbors_all[i]
-        coords_i = coords[i]
-        
-        if isempty(neighbors)
-            # continue
-            return
+        task = Threads.@spawn begin
+            # neighbors = get_neighbors(neig, i)
+            neighbors::Vector{Int} = neighbors_all[i]
+            coords_i = coords[i]
+            
+            if isempty(neighbors)
+                # continue
+                return
+            end
+
+            n_neighbors::Int = length(neighbors)
+            d_i::Vector{Float64} = zeros(n_neighbors)
+            for (index_j, j::Int) in enumerate(neighbors)
+                d_i[index_j] = minimum((sqrt(sum(vector(coords_i, coords[j], boundary).^2)),eam.r[end])) # unit already in Å
+            end
+
+            eam_embedded_energy_i = eam.embedded_energy[i_type]
+            for j_type::Int in 1:eam.Nelements
+                # use = get_type(neighbors, typelist) .== j_type
+                # if !any(use)
+                #     continue
+                # end
+                # d_use = d_i[use]
+                d_use = d_i
+
+                pair_energy += sum(eam_phi_ix[j_type].(d_use))
+                total_density[i] += sum(eam.electron_density[j_type].(d_use))
+            end
+            embedding_energy += eam_embedded_energy_i.(total_density[i])
         end
-
-        n_neighbors::Int = length(neighbors)
-        d_i::Vector{Float64} = zeros(n_neighbors)
-        for (index_j, j::Int) in enumerate(neighbors)
-            d_i[index_j] = minimum((sqrt(sum(vector(coords_i, coords[j], boundary).^2)),eam.r[end])) # unit already in Å
-        end
-
-        eam_embedded_energy_i = eam.embedded_energy[i_type]
-        for j_type::Int in 1:eam.Nelements
-            # use = get_type(neighbors, typelist) .== j_type
-            # if !any(use)
-            #     continue
-            # end
-            # d_use = d_i[use]
-            d_use = d_i
-
-            pair_energy += sum(eam_phi_ix[j_type].(d_use))
-            total_density[i] += sum(eam.electron_density[j_type].(d_use))
-        end
-        embedding_energy += eam_embedded_energy_i.(total_density[i])
-
+        push!(tasks, task)
+    end
+    for task in tasks
+        wait(task)
     end
 
     components = Dict("pair" => pair_energy/2, "embedding" => embedding_energy)
@@ -388,93 +394,106 @@ function calculate_forces(eam::EAM, coords::Vector{SVector{3, Float64}}, boundar
     r_i::Matrix{Float64} = zeros(n_neighbors_max,3)
     d_i::Vector{Float64} = zeros(n_neighbors_max)
     # Threads.@threads 
+    tasks = []
     for i::Int in 1:length(coords)
-        # i_type::Int = indexin(1, typelist)[1]
+        task = Threads.@spawn begin
+            # i_type::Int = indexin(1, typelist)[1]
+            
+            # neighbors = get_neighbors(neig, i)
+            neighbors::Vector{Int} = neighbors_all[i]    
+            if isempty(neighbors)
+                # continue
+                return
+            end
+
+            n_neighbors::Int = length(neighbors)
+            coords_i = coords[i]
         
-        # neighbors = get_neighbors(neig, i)
-        neighbors::Vector{Int} = neighbors_all[i]    
-        if isempty(neighbors)
-            # continue
-            return
-        end
+            # distance between atom i and its neighbors
+            # r_i::Matrix{Float64} = zeros(n_neighbors,3)
+            # d_i::Vector{Float64} = zeros(n_neighbors)
+            for (index_j::Int, j::Int) in enumerate(neighbors)
+                r_ij = (vector(coords_i, coords[j], boundary)) # Å
+                d_ij = sqrt(sum(r_ij.^2))
+                r_i[index_j,1:3] = r_ij
+                d_i[index_j] = minimum((d_ij,eam.r[end]))
+            end
 
-        n_neighbors::Int = length(neighbors)
-        coords_i = coords[i]
-    
-        # distance between atom i and its neighbors
-        # r_i::Matrix{Float64} = zeros(n_neighbors,3)
-        # d_i::Vector{Float64} = zeros(n_neighbors)
-        for (index_j::Int, j::Int) in enumerate(neighbors)
-            r_ij = (vector(coords_i, coords[j], boundary)) # Å
-            d_ij = sqrt(sum(r_ij.^2))
-            r_i[index_j,1:3] = r_ij
-            d_i[index_j] = minimum((d_ij,eam.r[end]))
-        end
+            push!(r_all, r_i[1:n_neighbors,1:3])
+            push!(d_all, d_i[1:n_neighbors])
+            
 
-        push!(r_all, r_i[1:n_neighbors,1:3])
-        push!(d_all, d_i[1:n_neighbors])
-        
-
-        for j_type::Int in 1:eam.Nelements # iterate over all types
-            # use = get_type(neighbors, typelist) .== j_type # get the index of the neighbors with type j
-            # if !any(use)
-            #     continue
-            # end
-            # d_use = d_i[use]
-            d_use = d_all[i]
-    
-            density = sum(eam.electron_density[j_type].(d_use)) # electron density
-            total_density[i] += density # total electron density around atom i
-        end
-
-    end
-
-    # calculate forces on particles
-    # Threads.@threads 
-    for i::Int in 1:length(coords)
-        # i_type::Int = indexin(1, typelist)[1]
-        # neighbors = get_neighbors(neig, i)
-        neighbors::Vector{Int} = neighbors_all[i]
-        if isempty(neighbors)
-            # continue
-            return
-        end
-        n_neighbors::Int = length(neighbors)
-        coords_i = coords[i]
-    
-        r_i = r_all[i]
-        d_i = d_all[i]
-        
-        # derivative of the embedded energy of atom i
-        d_embedded_energy_i::Float64 = eam.d_embedded_energy[i_type].(total_density[i])
-    
-        ur_i = r_i
-    
-        # unit directional vector
-        ur_i ./= d_i
-
-        for j_type::Int in 1:eam.Nelements
+            for j_type::Int in 1:eam.Nelements # iterate over all types
                 # use = get_type(neighbors, typelist) .== j_type # get the index of the neighbors with type j
                 # if !any(use)
                 #     continue
                 # end
                 # d_use = d_i[use]
-                # ur_use = ur_i[use, :]
-                # neighbors_use = neighbors[use]
-                d_use = d_i
-                ur_use::Matrix{Float64} = ur_i[:,:]
-                neighbors_use = neighbors
+                d_use = d_all[i]
         
-                total_density_j = total_density[neighbors_use]
-                
-                scale::Vector{Float64} = eam.d_phi[i_type, j_type].(d_use)
-                scale .+= (d_embedded_energy_i .* eam.d_electron_density[j_type].(d_use)) 
-                scale .+= (eam.d_embedded_energy[j_type].(total_density_j) .* d_electron_density_i.(d_use))
-        
-                forces_particle[i, :] .+= (ur_use' * scale)
+                density = sum(eam.electron_density[j_type].(d_use)) # electron density
+                total_density[i] += density # total electron density around atom i
+            end
         end
-
+        push!(tasks, task)
     end
+    for task in tasks
+        wait(task)
+    end
+    
+    # calculate forces on particles
+    # Threads.@threads 
+    tasks = []
+    for i::Int in 1:length(coords)
+        task = Threads.@spawn begin
+            # i_type::Int = indexin(1, typelist)[1]
+            # neighbors = get_neighbors(neig, i)
+            neighbors::Vector{Int} = neighbors_all[i]
+            if isempty(neighbors)
+                # continue
+                return
+            end
+            n_neighbors::Int = length(neighbors)
+            coords_i = coords[i]
+        
+            r_i = r_all[i]
+            d_i = d_all[i]
+            
+            # derivative of the embedded energy of atom i
+            d_embedded_energy_i::Float64 = eam.d_embedded_energy[i_type].(total_density[i])
+        
+            ur_i = r_i
+        
+            # unit directional vector
+            ur_i ./= d_i
+
+            for j_type::Int in 1:eam.Nelements
+                    # use = get_type(neighbors, typelist) .== j_type # get the index of the neighbors with type j
+                    # if !any(use)
+                    #     continue
+                    # end
+                    # d_use = d_i[use]
+                    # ur_use = ur_i[use, :]
+                    # neighbors_use = neighbors[use]
+                    d_use = d_i
+                    ur_use::Matrix{Float64} = ur_i[:,:]
+                    neighbors_use = neighbors
+            
+                    total_density_j = total_density[neighbors_use]
+                    
+                    scale::Vector{Float64} = eam.d_phi[i_type, j_type].(d_use)
+                    scale .+= (d_embedded_energy_i .* eam.d_electron_density[j_type].(d_use)) 
+                    scale .+= (eam.d_embedded_energy[j_type].(total_density_j) .* d_electron_density_i.(d_use))
+            
+                    forces_particle[i, :] .+= (ur_use' * scale)
+            end
+        end
+        push!(tasks, task)
+    end
+    for task in tasks
+        wait(task)
+    end
+    
 
     return [SVector{3,Float64}(forces_particle[idx_f,:]) for idx_f in 1:size(forces_particle)[1]]*u"eV/Å"
 end
