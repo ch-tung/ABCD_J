@@ -1,0 +1,33 @@
+# LAMMPS script for energy barrier calculation using NEB
+
+# Initialize simulation
+clear
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+atom_modify	map array sort 0 0.0
+
+# Create atom positions
+read_data ./data.000
+
+# Set atom type and mass
+mass 1 26.9815
+
+# Define interatomic potential
+pair_style eam/alloy
+pair_coeff * * Al99.eam.alloy Al
+
+timestep	0.001
+
+fix 1 all neb 1.0 parallel ideal
+thermo		100
+run 1
+
+
+# run NEB for 2000 steps or to force tolerance
+timestep        0.001
+in_style	quickmin
+
+neb    0.00 0.01 2000 2000 100 final ./data.034
+
