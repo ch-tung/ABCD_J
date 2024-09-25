@@ -20,11 +20,11 @@ pair_coeff * * Al99.eam.alloy Al
 timestep	0.001
 
 fix 1 all neb 1.0 parallel ideal
+run 1
 
 
 # run NEB for 2000 steps or to force tolerance
 timestep        0.001
-in_style	quickmin
-
+min_style	fires
 neb    0.01 0.01 2000 2000 100 final ./final.029
 
