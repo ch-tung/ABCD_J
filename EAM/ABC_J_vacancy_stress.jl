@@ -102,14 +102,15 @@ W = 0.1
 @printf("sigma^2 = %e, %e Å/dof^1/2\n W = %e eV\n",ustrip(sigma^2), ustrip(sigma/sqrt(3*N_free)),ustrip(W))
 
 simulator = ABCSimulator(sigma=sigma*u"Å", W=W*u"eV", 
-                         max_steps=1, max_steps_minimize=30, step_size_minimize=5e-3u"ps", tol=1e-3u"eV/Å")
+                         max_steps=40, max_steps_minimize=30, step_size_minimize=5e-3u"ps", tol=1e-3u"eV/Å")
 
 # using ProfileView
 # ProfileView.@profview 
-@code_warntype simulate!(molly_system, simulator, eamJulia, n_threads=1, 
+# @code_warntype 
+simulate!(molly_system, simulator, eamJulia, n_threads=1, 
         #   fname="output_stress_cube8.txt", fname_dump="stress_cube8.dump", fname_min_dump="min_stress_cube8.dump",
           fname="test.txt", fname_dump="test.dump", fname_min_dump="test.dump", # for speed test
-          neig_interval=32, loggers_interval=10, dump_interval=100, start_dump=0,
+          neig_interval=30, loggers_interval=10, dump_interval=100, start_dump=0,
           minimize_only=false, 
           d_boost=1e-6u"Å", 
           frozen_atoms=frozen_atoms, nopenalty_atoms=nopenalty_atoms, 

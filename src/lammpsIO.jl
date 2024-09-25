@@ -137,6 +137,27 @@ function lmpDumpWriter_prop(file,timestep,sys,fname_dump,property)
     # end
 end
 
+function lmpDumpWriter_prop(timestep, sys, property)
+    output = ""
+    
+    output *= "ITEM: TIMESTEP\n"
+    output *= string(timestep)*"\n"
+    output *= "ITEM: NUMBER OF ATOMS\n"
+    output *= string(length(sys.coords))*"\n"
+    output *= "ITEM: BOX BOUNDS pp pp pp\n"
+    output *= "0 "*string(ustrip(sys.boundary[1]))*"\n"
+    output *= "0 "*string(ustrip(sys.boundary[2]))*"\n"
+    output *= "0 "*string(ustrip(sys.boundary[3]))*"\n"
+    output *= "ITEM: ATOMS id type xu yu zu property\n"
+    
+    for (i_c, coord) in enumerate(sys.coords)
+        atomdata = sys.atoms_data[i_c]
+        output *= string(i_c)*" "*string(atomdata.atom_type)*" "*join(ustrip(coord)," ")*" "*string(property[i_c])*"\n"
+    end
+
+    return output
+end
+
 """
     lmpDataWriter_prop(file, timestep, sys, fname_dump, property)
 
@@ -170,6 +191,39 @@ function lmpDataWriter_prop(file,timestep,sys,fname_dump,property)
     # end
 end
 
+function lmpDataWriter_prop(timestep, sys, property)
+    output = ""
+    n_types = length(unique([ad.atom_type for ad in sys.atoms_data]))
 
+    output *= "# LAMMPS data file written by lammpsIO.jl\n"       #1
+    output *= "\n"                                                #2
+    output *= string(length(sys.coords))*" atoms\n"               #3
+    output *= string(n_types)*" atom types\n"                     #4
+    output *= "\n"                                                #5
+    output *= "0 "*string(ustrip(sys.boundary[1]))*" xlo xhi\n"   #6
+    output *= "0 "*string(ustrip(sys.boundary[2]))*" ylo yhi\n"   #7
+    output *= "0 "*string(ustrip(sys.boundary[3]))*" zlo zhi\n"   #8
+    output *= "\n"                                                #9
+    output *= "Atoms  # atomic\n"                                 #10
+    output *= "\n"                                                #11
 
+    for (i_c, coord) in enumerate(sys.coords)
+        atomdata = sys.atoms_data[i_c]
+        output *= string(i_c)*" "*string(atomdata.atom_type)*" "*join(ustrip(coord)," ")*" "*string(property[i_c])*"\n"
+    end
 
+    return output
+end
+
+function lmpFinalWriter(file,timestep,sys,fname_dump)
+    # open(fname_dump, "a") do file
+    n_types = length(unique([ad.atom_type for ad in molly_system.atoms_data]))
+    write(file, "# Final file for NEB written by lammpsIO.jl\n")       #1
+    write(file, "\n")                                                  #2
+    write(file, string(length(sys.coords))*"\n")                       #3
+    for (i_c, coord) in enumerate(sys.coords)
+        atomdata = sys.atoms_data[i_c]
+        write(file, string(i_c)*" "*join(ustrip(coord)," ")*"\n")
+    end
+    # end
+end
