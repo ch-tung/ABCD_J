@@ -454,9 +454,13 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
     end
 
     # dump first dump file
-    open(fname_min_dump, "w") do file_min
-        lmpDumpWriter_prop(file_min,0,sys,fname_min_dump, vm_stress)
+    open(fname_min_dump, "w") do file_min_dump
+        write(file_min_dump, "")
     end
+    output = lmpDumpWriter_prop(0,sys,vm_stress)
+    # open(fname_min_dump, "w") do file_min
+    #     lmpDumpWriter_prop(file_min,0,sys,fname_min_dump, vm_stress)
+    # end
 
     ## 1. Store the initial coordinates
     penalty_coords = [copy(sys.coords)]  
@@ -467,7 +471,7 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
     n_top = round(Int, p_stress*N)
     nopenalty_atoms_stress = sorted_indices[1:n_top]
 
-    p = Progress(sim.max_steps)
+    p = Progress(sim.max_steps, 10)
     step_counter = 0
     dr = sys.coords*0
 
@@ -534,17 +538,24 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                 vm_stress = f_vm_stress(stresses)
                 stresses_prev = interaction.f_atomstress(eam, sys_prev, neighbors_all)
                 vm_stress_prev = f_vm_stress(stresses_prev)
-                open(fname_min_dump, "a") do file_min_dump
-                    lmpDumpWriter_prop(file_min_dump,step_n-1,sys_prev,fname_min_dump,vm_stress_prev)
-                    lmpDumpWriter_prop(file_min_dump,step_n,sys,fname_min_dump,vm_stress)
+                output *= lmpDumpWriter_prop(step_n-1,sys_prev,vm_stress_prev)
+                output *= lmpDumpWriter_prop(step_n,sys,vm_stress)
+                # open(fname_min_dump, "a") do file_min_dump
+                #     lmpDumpWriter_prop(file_min_dump,step_n-1,sys_prev,fname_min_dump,vm_stress_prev)
+                #     lmpDumpWriter_prop(file_min_dump,step_n,sys,fname_min_dump,vm_stress)
+                # end
+                fname_min_data = fname_min_path*"data."*string(step_n,pad=3)
+                fname_min_data_prev = fname_min_path*"data."*string(step_n-1,pad=3)
+                open(fname_min_data, "a") do file_min_data
+                    lmpDataWriter(file_min_data,step_n,sys,fname_min_data)  
                 end
-                
-                # open(fname_min_data, "a") do file_min_data
-                #     lmpDataWriter(file_min_data,step_n,sys,fname_min_data)  
-                # end
-                # open(fname_min_data_prev, "a") do file_min_data
-                #     lmpDataWriter(file_min_data,step_n-1,sys_prev,fname_min_data_prev)
-                # end
+                open(fname_min_data_prev, "a") do file_min_data
+                    lmpDataWriter(file_min_data,step_n-1,sys_prev,fname_min_data_prev)
+                end
+                fname_min_final = fname_min_path*"final."*string(step_n,pad=3)
+                open(fname_min_final, "a") do fname_min_final
+                    lmpFinalWriter(fname_min_final,step_n,sys,fname_min_final)
+                end
 
                 # update penalty list
                 # Get the indices of the particles sorted by von Mises stress in descending order
@@ -581,5 +592,8 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
     end
         # end
     # end
+    open(fname_min_dump, "a") do file_min_dump
+        write(file_min_dump, output)
+    end
     return sys
 end
