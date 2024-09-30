@@ -3,12 +3,17 @@
 # Initialize simulation
 clear
 atom_style      atomic
+units metal
 atom_modify     map array
 boundary        p p p
 atom_modify	sort 0 0.0
 
 # Create atom positions
 read_data ./data.000
+
+region inner block 2 30 2 30 2 30
+group inner region inner
+group outer subtract all inner
 
 # Set atom type and mass
 mass 1 26.9815
@@ -17,14 +22,10 @@ mass 1 26.9815
 pair_style eam/alloy
 pair_coeff * * Al99.eam.alloy Al
 
-timestep	0.001
-
-fix 1 all neb 5.0 parallel ideal
-run 1
-
+fix 1 inner neb 1e2 parallel ideal
+fix 2 outer setforce 0.0 0.0 0.0
 
 # run NEB for 2000 steps or to force tolerance
 timestep        0.001
 min_style	fire
-neb    0.0 0.0001 1000 0 100 final ./final.029
-
+neb    1e-12 1e-12 10000 20000 1000 final ./final.032
