@@ -187,176 +187,8 @@ Minimizes the system using the Fast Inertial Relaxation Engine (FIRE) algorithm.
 - `acoef_0::Float64`: The initial value of the acceleration coefficient. Default is 0.1.
 - `alpha::Float64`: The parameter controlling the step size. Default is 0.99.
 """
-function Minimize_FIRE!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJulia, 
-                        penalty_coords, neighbors_all::Vector{Vector{Int}};
-                        step_size_minimize = sim.step_size_minimize, max_steps_minimize = sim.max_steps_minimize,
-                        n_threads::Integer=1, frozen_atoms=[], neig_interval::Int=1000, print_nsteps=false,
-                        mass::typeof(1.0u"u")=26.9815u"u",acoef_0::Float64=0.1,alpha::Float64=0.99)
-    dt_0 = step_size_minimize # time unit (ps)
-    dt = dt_0
-    acoef = acoef_0
-    # Set F_multiplier of frozen_atoms to zero
-    F_multiplier = ones(length(sys.coords))
-    for atom in frozen_atoms
-        F_multiplier[atom] = 0
-    end
-  
-    E = f_energy_phi(sys, sim, interaction, penalty_coords, neighbors_all)
 
-    v_0 = [(@SVector zeros(3))*u"eV/Å/u*ps" for i in 1:length(sys.coords)] # force/mass*time
-    v = v_0
-    for step_n in 1:max_steps_minimize
-        if step_n % neig_interval == 0
-            neighbors_all = get_neighbors_all(sys)
-        end
-
-        # 1. skier force
-        F = forces(sys, interaction, penalty_coords, sim.sigma, sim.W, neighbors_all)
-        F = F.*F_multiplier
-        
-        P = sum(sum([v[i].*F[i] for i in 1:length(v)]))   
-        vv = sum(sum([v[i].*v[i] for i in 1:length(v)]))
-        FF = sum(sum([F[i].*F[i] for i in 1:length(v)]))
-        if ustrip(P)>0.0
-            # dt *= 1.1
-            dt = min(dt*1.2, 1e3*dt_0)
-            v = (1-acoef)*v + acoef*sqrt(vv/FF)*F
-            acoef = acoef * alpha
-            
-        else
-            # dt *= 0.5
-            dt = max(dt*0.5, 1e-1*dt_0)
-            v = v_0
-            acoef = acoef_0
-        end
-
-        # 2. MD
-        accl = F/mass # force/mass
-        v += accl.*dt # force/mass*time
-
-        # 3. update coordinate
-        coords_update = v .* dt
-        sys.coords .+= coords_update # force/mass*time*2
-
-        E_trial = f_energy_phi(sys, sim, interaction, penalty_coords, neighbors_all)
-        # print(E,"\n")
-        # if E_trial>E
-        #     # print("zeroing velocity")
-        #     v*=0
-        # else
-        #     E = E_trial
-        # end
-
-    end
-    # neighbors_all = get_neighbors_all(sys)
-    # F = forces(sys, interaction, penalty_coords, sim.sigma, sim.W, neighbors_all)
-    # F = F.*F_multiplier
-    # max_force = maximum(norm.(F))
-    # @printf("max force = %e eV/Å ",ustrip(max_force))
-    return sys
-end
-
-
-"""
-Minimize_MD!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJulia, penalty_coords, neighbors_all::Vector{Vector{Int}};
-                        n_threads::Integer=1, frozen_atoms=[], neig_interval::Int=1000, print_nsteps=false,
-                        mass::typeof(1.0u"u")=26.9815u"u", acoef_0::Float64=0.1,alpha::Float64=0.99,constrained=false)
-
-Minimizes the molecular dynamics (MD) system using the ABC algorithm.
-
-# Arguments
-- `sys::System`: The molecular dynamics system.
-- `sim::ABCSimulator`: The ABC simulator.
-- `interaction::EAMInteractionJulia`: The EAM interaction.
-- `penalty_coords`: The penalty coordinates.
-- `neighbors_all::Vector{Vector{Int}}`: The neighbor list.
-
-# Optional Arguments
-- `n_threads::Integer=1`: The number of threads to use.
-- `frozen_atoms=[]`: The list of frozen atoms.
-- `neig_interval::Int=1000`: The neighbor interval.
-- `print_nsteps=false`: Whether to print the number of steps.
-- `mass::typeof(1.0u"u")=26.9815u"u"`: The mass of the atoms.
-- `acoef_0::Float64=0.1`: The initial value of the a coefficient.
-- `alpha::Float64=0.99`: The alpha coefficient.
-- `constrained=false`: Whether the system is constrained.
-- `gamma`: The damping strength
-
-# Returns
-- `sys`: The updated molecular dynamics system.
-
-"""
-function Minimize_MD!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJulia, 
-                      penalty_coords, neighbors_all::Vector{Vector{Int}};
-                      step_size_minimize = sim.step_size_minimize, max_steps_minimize = sim.max_steps_minimize,
-                      n_threads::Integer=1, frozen_atoms=[], nopenalty_atoms=[], neig_interval::Int=1000, print_nsteps=false,
-                      mass::typeof(1.0u"u")=26.9815u"u",constrained=false, etol = 1e-4, gamma=0.0)
-    N = length(sys.coords)
-    dt_0 = step_size_minimize # time unit (ps)
-    dt = dt_0
-    # acoef = acoef_0
-    # Set F_multiplier of frozen_atoms to zero
-    F_multiplier = ones(length(sys.coords))
-    for atom in frozen_atoms
-        F_multiplier[atom] = 0
-    end
-    
-    # energy before move
-    E_0 = f_energy_phi(sys, sim, interaction, penalty_coords, neighbors_all, nopenalty_atoms=nopenalty_atoms)
-    E = E_0
-    deltaE_current = E_0*0
-    deltaE_1 = E_0*0
-    # print(E,"\n")
-
-    v_0 = [(@SVector zeros(3))*u"eV/Å/u*ps" for i in 1:length(sys.coords)] # force/mass*time
-    v = v_0
-    for step_n in 1:sim.max_steps_minimize
-        if step_n % neig_interval == 0
-            neighbors_all = get_neighbors_all(sys)
-        end
-        # 1. calculate Force
-        F = forces(sys, interaction, penalty_coords, sim.sigma, sim.W, neighbors_all, nopenalty_atoms=nopenalty_atoms)
-        F = F.*F_multiplier
-
-        # 2. MD
-        accl = F/mass # force/mass
-        v += accl.*dt - gamma*v # force/mass*time
-        coords_update = v .* dt # force/mass*time^2
-
-        # zeroing CM
-        coords_update_cm = sum(coords_update)/N
-        coords_update = [c - coords_update_cm for c in coords_update]
-
-        sys.coords .+= coords_update # force/mass*time*2
-
-        # energy after move
-        E_trial = f_energy_phi(sys, sim, interaction, penalty_coords, neighbors_all, nopenalty_atoms=nopenalty_atoms)
-
-        if step_n == 1
-        # terminate condition
-            continue
-        else 
-            deltaE_current = abs(E_trial-E)
-            deltaE_1 = abs(E_trial-E_0)
-            if deltaE_current<etol*deltaE_1
-                break
-            end
-        end
-
-        # print(E,"\n")
-        if E_trial>E
-            # print("zeroing velocity")
-            v = v_0
-            dt = max(dt*0.9, 3e-1*dt_0)
-        else
-            E = E_trial
-            dt = min(dt*1.1, 3*dt_0)
-        end
-
-    end
-    return sys
-end
-
+include("minimize.jl")
 
 # Implement the simulate! function for ABCSimulator
 """
@@ -402,7 +234,7 @@ Simulates the system using the ABC algorithm with an EAM interaction potential.
 
 function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJulia; 
                    n_threads::Integer=Threads.nthreads(), run_loggers::Bool=true, fname::String="output_MD.txt", fname_dump="out.dump", fname_min_dump="out_min.dump",
-                   neig_interval::Int=1, loggers_interval::Int=1, dump_interval::Int=1, start_dump::Int=1,
+                   neig_interval::Int=1, loggers_interval::Int=1, dump_interval::Int=1000, start_dump::Int=1,final=false,
                    minimize_only::Bool=false, 
                    d_boost=1.0e-2u"Å", beta=0.0, E_th = sim.W*exp(-3),
                    frozen_atoms=[], nopenalty_atoms=[],
@@ -544,17 +376,19 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                 #     lmpDumpWriter_prop(file_min_dump,step_n-1,sys_prev,fname_min_dump,vm_stress_prev)
                 #     lmpDumpWriter_prop(file_min_dump,step_n,sys,fname_min_dump,vm_stress)
                 # end
-                fname_min_data = fname_min_path*"data."*string(step_n,pad=3)
-                fname_min_data_prev = fname_min_path*"data."*string(step_n-1,pad=3)
-                open(fname_min_data, "a") do file_min_data
-                    lmpDataWriter(file_min_data,step_n,sys,fname_min_data)  
-                end
-                open(fname_min_data_prev, "a") do file_min_data
-                    lmpDataWriter(file_min_data,step_n-1,sys_prev,fname_min_data_prev)
-                end
-                fname_min_final = fname_min_path*"final."*string(step_n,pad=3)
-                open(fname_min_final, "a") do fname_min_final
-                    lmpFinalWriter(fname_min_final,step_n,sys,fname_min_final)
+                if final
+                    fname_min_data = fname_min_path*"data."*string(step_n,pad=3)
+                    fname_min_data_prev = fname_min_path*"data."*string(step_n-1,pad=3)
+                    open(fname_min_data, "a") do file_min_data
+                        lmpDataWriter(file_min_data,step_n,sys,fname_min_data)  
+                    end
+                    open(fname_min_data_prev, "a") do file_min_data
+                        lmpDataWriter(file_min_data,step_n-1,sys_prev,fname_min_data_prev)
+                    end
+                    fname_min_final = fname_min_path*"final."*string(step_n,pad=3)
+                    open(fname_min_final, "a") do fname_min_final
+                        lmpFinalWriter(fname_min_final,step_n,sys,fname_min_final)
+                    end
                 end
 
                 # update penalty list
@@ -566,10 +400,14 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
 
                 continue
             end
-            # if step_n % dump_interval == 0
-            #     # lmpDumpWriter(file,step_n,sys,fname_dump)
-            #     # print("step ",step_n,"\n")
-            # end
+
+            # dump the system configuration and clear output string
+            if step_n % dump_interval == 0
+                open(fname_min_dump, "a") do file_min_dump
+                    write(file_min_dump, output)
+                end
+                output = ""
+            end
         end
         
         ## write energy and penalty energy to text file
@@ -592,6 +430,8 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
     end
         # end
     # end
+
+    # dump the rest of the system configuration
     open(fname_min_dump, "a") do file_min_dump
         write(file_min_dump, output)
     end
