@@ -131,7 +131,6 @@ and return the forces identical to the original forces function
 """
 function Molly.forces(sys::System, interaction::EAMInteractionJulia, penalty_coords, sigma::typeof(1.0u"Å"), W::typeof(1.0u"eV"), neighbors_all::Vector{Vector{Int}};
     n_threads::Integer=Threads.nthreads(), nopenalty_atoms=[]) 
-
     
     fs = interaction.f_forces(interaction.calculator, sys, neighbors_all)
 
