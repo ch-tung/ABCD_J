@@ -1,0 +1,78 @@
+# LAMMPS input script for Cu FCC surface
+
+# Initialize simulation
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+
+# Create the crystal lattice
+lattice fcc 3.615
+region box block 0 12 0 12 0 20
+create_box 1 box
+create_atoms 1 box
+
+# Set atom type and mass
+mass 1 63.546
+
+# Define interatomic potential
+pair_style eam/alloy
+pair_coeff * * Cu_Zhou04.eam.alloy Cu
+
+# remove atom
+
+variable b1 index 0 1
+
+
+variable l equal 6
+
+label loopb1
+variable b1 index 0 1
+    label loopb2
+    variable b2 index 0 1
+        label loopb3
+        variable b3 index 0 1 2
+
+            variable c11 equal v_b1*v_l-0.1
+            variable c12 equal v_b1*v_l+0.1
+            variable c21 equal v_b2*v_l-0.1
+            variable c22 equal v_b2*v_l+0.1
+            variable c31 equal v_b3*v_l-0.1
+            variable c32 equal v_b3*v_l+0.1
+
+            region 1 block ${c11} ${c12} ${c21} ${c22} ${c31} ${c32}
+            delete_atoms region 1 compress yes
+
+            variable c11 equal v_b1*v_l-0.1+0.5*v_l
+            variable c12 equal v_b1*v_l+0.1+0.5*v_l
+            variable c21 equal v_b2*v_l-0.1+0.5*v_l
+            variable c22 equal v_b2*v_l+0.1+0.5*v_l
+            variable c31 equal v_b3*v_l-0.1+0.5*v_l
+            variable c32 equal v_b3*v_l+0.1+0.5*v_l
+
+            region 2 block ${c11} ${c12} ${c21} ${c22} ${c31} ${c32}
+            delete_atoms region 2 compress yes
+            region 1 delete
+            region 2 delete
+
+        next b3
+        jump in.Cu_surface loopb3
+    next b2
+    jump in.Cu_surface loopb2
+next b1
+jump in.Cu_surface loopb1
+
+region 3 block 0 12 0 12 12.5 20
+delete_atoms region 3 compress yes
+region 3 delete
+
+# Perform energy minimization
+fix 1 all box/relax iso 0.0 vmax 0.001
+minimize 1e-8 1e-8 1000 10000
+
+# Dump
+reset_timestep 0
+dump 0 all custom 1 ./out_surface.dump id type xu yu zu
+dump_modify 0 sort id 
+run 0
+undump 0
