@@ -251,7 +251,7 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                    d_boost=1.0e-2u"Å", beta=0.0, E_th = sim.W*exp(-3),
                    frozen_atoms=[], nopenalty_atoms=[],
                    p_drop::Float64=0.0, p_keep=0.5, drop_interval::Int=1, n_memory::Int=50, n_search::Int=60,
-                   p_stress::Float64=1e-2)
+                   p_stress::Float64=1e-2, n_stress=12)
     N = length(sys.coords)
     neighbors_all = get_neighbors_all(sys)
     neighbors = find_neighbors(sys, sys.neighbor_finder; n_threads=n_threads)
@@ -314,6 +314,9 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
     # Select the particles with the top von Mises stress
     n_top = round(Int, p_stress*N)
     nopenalty_atoms_stress = sorted_indices[1:n_top]
+    nopenalty_atoms_stress_append = rand(n_top:N, N-n_stress-n_top)
+    nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, nopenalty_atoms_stress_append)
+    nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, frozen_atoms)
 
     p = Progress(sim.max_steps, 10)
     step_counter = 0
@@ -409,6 +412,9 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                 # Select the particles with the top von Mises stress
                 n_top = round(Int, p_stress*N)
                 nopenalty_atoms_stress = sorted_indices[1:n_top]
+                nopenalty_atoms_stress_append = rand(n_top:N, N-n_stress-n_top)
+                nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, nopenalty_atoms_stress_append)
+                nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, frozen_atoms)
 
                 continue
             end
