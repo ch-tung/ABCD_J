@@ -1,136 +1,170 @@
 # [ABCD\_J: Autonomous Basin Climbing Dynamics in Julia](https://github.com/ch-tung/ABCD_J.git)
 
-This project incorporates Julia into a new metadynamics molecular simulation program. The simulation framework is developed using the Julia packages [Molly.jl](https://github.com/JuliaMolSim/Molly.jl), [AtomsBase.jl](https://github.com/JuliaMolSim/AtomsBase.jl), and [AtomsCalculators.jl](https://github.com/JuliaMolSim/AtomsCalculators.jl).
+This project incorporates Julia into a new metadynamics molecular simulation program. The simulation framework is developed using the Julia packages [Molly.jl](https://github.com/JuliaMolSim/Molly.jl), [AtomsBase.jl](https://github.com/JuliaMolSim/AtomsBase.jl), and [AtomsCalculators.jl](https://github.com/JuliaMolSim/AtomsCalculators.jl). The Julia LAMMPS wrapper [LAMMPS.jl](https://github.com/cesmix-mit/LAMMPS.jl) is also utilized to facilitate early-stage development.
 
 ## `src/`: Julia sourcecodes
 
-### `juliaEAM.jl`: Pure julia based EAM calculator.
+### `juliaEAM.jl`: Julia based EAM calculator.
 
-#### Read the potential data from a file and populate the fields of the `calculator` object
+* `read_potential!` Reads the potential data from a file and populate the fields of the `calculator` object.
+* `calculate_energy`, `calculate_energy_LAMMPS` Calculates the total energy of a system using the Embedded Atom Method (EAM).
+* `calculate_forces`, `calculate_forces_LAMMPS` Calculate the forces on particles using the Embedded Atom Method (EAM).
+* `calculate_atomstress` Calculate the atomic level stresses around the particles.
 
-```julia
-read_potential!(calculator::EAM, fd::String)
-```
+### `lammpsIO.jl`: Read/Write LAMMPS dump file
 
-**Arguments:**
+* `lmpDumpReader` Reads a LAMMPS dump file and extracts the number of atoms, box size, and atomic coordinates.
+* `lmpDumpWriter` Write system information to a LAMMPS dump file.
+* `lmpDataWriter` Write LAMMPS data file.
+* `lmpDumpWriter_prop` Write atomic data to a LAMMPS dump file with additional property.
+* `lmpDataWriter_prop` Write atomic data to a LAMMPS data file with additional property.
+* `lmpFinalWriter` Write outputs for NEB calculations.
 
-*   `calculator`: The EAM calculator object to populate with potential data.
-*   `fd`: The file path to the potential data file.
+### `simulator.jl`: Define the ABC simulator
 
-#### Calculate the total energy of a system using the Embedded Atom Method (EAM)
+* `ABCSimulator` Defines the ABCSimulator class.
+* `simulate!` Updates the system according to ABC algorithm.
 
-```julia
-calculate_energy(eam::EAM, sys::Molly.System, neighbors_all)
-```
-
-**Arguments:**
-
-*   `eam`: The EAM potential parameters.
-*   `sys`: The system object containing atom coordinates and types.
-*   `neighbors_all`: A precomputed list of neighbors for each atom.
-
-**Returns:**
-
-*   `energy`: The total energy of the system in electron volts (eV).
-
-#### Calculate the forces on particles using the Embedded Atom Method (EAM)
-
-```julia
-calculate_forces(eam::EAM, sys::Molly.System, neighbors_all)
-```
-
-**Arguments:**
-
-*   `eam`: An instance of the EAM potential.
-*   `sys`: The molecular system.
-*   `neighbors_all`: A precomputed list of neighbors for each atom.
-
-**Returns:**
-
-*   `forces_particle`: An array of Svector containing the forces on each particle in the system.
+### `minimize.jl`: Define the minimization algorithms
 
 **Example:**
-
 ```julia
-include("src/JuliaEAM.jl")
+## load the necessary packages
+cd(@__DIR__)
+ENV["CELLLISTMAP_8.3_WARNING"] = "false"
+include("src/juliaEAM.jl")
+include("src/lammpsIO.jl")
 
-# 1. Read potential
-eam = EAM()
-fname = "Al99.eam.alloy"
+using Pkg
+Pkg.activate(".")
+
+using Printf
+using AtomsCalculators
+using Unitful: Å, nm
+using StaticArrays: SVector
+using Molly
+using LinearAlgebra
+using DelimitedFiles
+using UnitfulAtomic
+import PeriodicTable
+using ProgressMeter
+using Random
+
+## Define Copper
+Cu_LatConst = 3.615/10 # nm
+atom_mass = 63.546u"u"  # Atomic mass of aluminum in grams per mole
+
+eam = EAM() # from juliaEAM.jl
+fname = "Cu_Zhou04.eam.alloy"
 read_potential!(eam, fname)
 
-# 2. Calculate potential energy
-atoms_ase_sim = convert_ase_custom(molly_system)
+## Define customized interaction type in `AtomsCalculators`
+struct EAMInteractionJulia
+    calculator::Any  # Holds the ASE EAM calculator reference
+    f_energy::Any    # Holds the energy function
+    f_forces::Any    # Holds the forces function
+    f_atomstress::Any  # Holds the atomic level stresses function
+    pair_coeff_string::String  # Holds the pair coefficient string
+end
+
+## Initialize system
+function initialize_system_dump(;loggers=(coords=CoordinateLogger(1),),filename_dump="")
+    n_atoms, box_size, coords_molly, attypes = lmpDumpReader(filename_dump)
+    molly_atoms = [Molly.Atom(index=i, charge=0, mass=atom_mass, 
+                    #   σ=2.0u"Å" |> x -> uconvert(u"nm", x), ϵ=ϵ_kJ_per_mol
+                    ) for i in 1:length(coords_molly)]
+    # Specify boundary condition
+    boundary_condition = Molly.CubicBoundary(box_size[1],box_size[2],box_size[3])
+
+    atom_positions_init = copy(coords_molly)
+    molly_atoms_init = copy(molly_atoms)
+
+    DNF = DistanceNeighborFinder(
+        eligible=trues(length(molly_atoms_init), length(molly_atoms_init)),
+        n_steps=1e3,
+        dist_cutoff=7u"Å")
+    TNF = TreeNeighborFinder(
+        eligible=trues(length(molly_atoms_init), length(molly_atoms_init)), 
+        n_steps=1e3,
+        dist_cutoff=7u"Å")
+
+    # Initialize the system with the initial positions and velocities
+    system_init = Molly.System(
+    atoms=molly_atoms_init,
+    atoms_data = [AtomData(element="Cu", atom_type=string(attypes[ia])) for (ia,a) in enumerate(molly_atoms_init)],
+    coords=atom_positions_init,  # Ensure these are SVector with correct units
+    boundary=boundary_condition,
+    # loggers=Dict(:kinetic_eng => Molly.KineticEnergyLogger(100), :pot_eng => Molly.PotentialEnergyLogger(100)),
+    neighbor_finder = DNF,
+    loggers=loggers,
+    energy_units=u"eV",  # Ensure these units are correctly specified
+    force_units=u"eV/Å"  # Ensure these units are correctly specified
+    )
+    return system_init
+end
+
+filename_dump = "./out_surface.dump"
+molly_system = initialize_system_dump(filename_dump = filename_dump)
 neighbors_all = get_neighbors_all(molly_system)
 
-# Run first time before timing
-AtomsCalculators.potential_energy(pyconvert(AbstractSystem, atoms_ase_sim), eam_cal)
-calculate_energy(eam, molly_system, neighbors_all)
+## Define the interaction and load simulator module
+eamJulia = EAMInteractionJulia(eam,calculate_energy,calculate_forces_LAMMPS,calculate_atomstress,"pair_coeff * * Cu_Zhou04.eam.alloy Cu")
+include("src/simulator.jl")
 
-println("Calculating potential energy using ASE EAM calculator")
-@time E_ASE = AtomsCalculators.potential_energy(pyconvert(AbstractSystem, atoms_ase_sim), eam_cal)
-println("Calculating potential energy using my EAM calculator")
-@time E_my = calculate_energy(eam, molly_system, neighbors_all)
-@printf("ASE EAM calculator: %e eV\n", ustrip(E_ASE))
-@printf("My EAM calculator: %e eV\n", ustrip(E_my))
-@printf("Difference: %e eV\n", ustrip(AtomsCalculators.potential_energy(pyconvert(AbstractSystem, atoms_ase_sim), eam_cal) - calculate_energy(eam, molly_system, neighbors_all)))
+## Define a Molly-style forces function
+function Molly.forces(sys::System, interaction::EAMInteractionJulia, penalty_coords, sigma::typeof(1.0u"Å"), W::typeof(1.0u"eV"), neighbors_all::Vector{Vector{Int}};
+    n_threads::Integer=Threads.nthreads(), nopenalty_atoms=[]) 
+    
+    fs = interaction.f_forces(sys, interaction.pair_coeff_string)
 
-function eam_ASE()
-    AtomsCalculators.potential_energy(pyconvert(AbstractSystem, atoms_ase_sim), eam_cal)
-end
-function eam_my()
-    calculate_energy(eam, molly_system, neighbors_all)
-end
-
-n_repeat = 10
-t0 = time()
-E_ASE = repeat(eam_ASE, n_repeat)
-t1 = time()
-E_ASE = repeat(eam_my, n_repeat)
-t2 = time()
-
-println("time/atom/step by ASE EAM calculator: ", (t1-t0)/n_repeat/length(molly_system.atoms), " seconds")
-println("time/atom/step by my EAM calculator: ", (t2-t1)/n_repeat/length(molly_system.atoms), " seconds")
-
-# 3. Calculate force
-# Run first time before timing
-forces_ASE = AtomsCalculators.forces(pyconvert(AbstractSystem, atoms_ase_sim), eam_cal)
-forces_my = calculate_forces(eam, molly_system, neighbors_all)
-
-println("Calculating forces using ASE EAM calculator")
-@time forces_ASE = AtomsCalculators.forces(pyconvert(AbstractSystem, atoms_ase_sim), eam_cal)
-println("Calculating forces using my EAM calculator")
-@time forces_my = calculate_forces(eam, molly_system, neighbors_all)
-
-@printf("Sum of forces by ASE EAM calculator: [%e %e %e] eV/Å\n", ustrip(sum(forces_ASE))...)
-@printf("Sum of forces by my EAM calculator: [%e %e %e] eV/Å\n", ustrip(sum(forces_my))...)
-
-forces_err = forces_my - forces_ASE
-index_max_forces_err = argmax([sqrt(sum(fe.^2)) for fe in forces_err])
-@printf("Max force error: %e eV/Å\n", ustrip(sqrt(sum(forces_err[index_max_forces_err].^2))))
-
-function eam_ASE_f()
-    AtomsCalculators.forces(pyconvert(AbstractSystem, atoms_ase_sim), eam_cal)
-end
-function eam_my_f()
-    calculate_forces(eam, molly_system, neighbors_all)
+    # Add penalty term to forces
+    if penalty_coords != nothing
+        fs += penalty_forces(sys, penalty_coords, sigma, W, nopenalty_atoms=nopenalty_atoms) # ev/Å
+        # print(maximum(norm.(penalty_forces(sys, penalty_coords, sigma, W))),"\n")
+    end
+    return fs
 end
 
-eam_ASE_f()
-eam_my_f()
-n_repeat = 10
-t0 = time()
-E_ASE = repeat(eam_ASE_f, n_repeat)
-t1 = time()
-E_ASE = repeat(eam_my_f, n_repeat)
-t2 = time()
+## Run energy minimization
+z_coords = [coords[3] for coords in molly_system.coords]
+frozen_atoms = [index for (index, z) in enumerate(z_coords) if z ≤ 1u"Å"]
 
-println("time/atom/step by ASE EAM calculator: ", (t1-t0)/n_repeat/length(molly_system.atoms), " seconds")
-println("time/atom/step by my EAM calculator: ", (t2-t1)/n_repeat/length(molly_system.atoms), " seconds")
+simulator = ABCSimulator(sigma=1.0*u"Å", W=1.0*u"eV", max_steps=1, max_steps_minimize=20, step_size_minimize=5e-3u"ps", tol=1e-6u"eV/Å")
+Minimize_FIRE!(molly_system, simulator, eamJulia, nothing, neighbors_all;
+         n_threads=1, frozen_atoms=frozen_atoms, neig_interval=5, print_nsteps=true,
+         mass=atom_mass)
+neighbors_all = get_neighbors_all(molly_system)
+
+## run ABC
+# frozen_atoms = []
+z_coords = [coords[3] for coords in molly_system.coords]
+frozen_atoms = [index for (index, z) in enumerate(z_coords) if z ≤ 1u"Å"]
+
+nopenalty_atoms = []
+N_free = length(molly_system.coords)-length(nopenalty_atoms)
+print("exclude ",length(nopenalty_atoms)," atoms from E_phi calculation\n")
+print("using ",N_free," atoms for E_phi calculation\n")
+
+# sigma = sqrt(0.006*3*N_free)
+sigma = sqrt(0.18)
+W = 0.1
+@printf("sigma^2 = %e, %e Å/dof^1/2\n W = %e eV\n",ustrip(sigma^2), ustrip(sigma/sqrt(3*N_free)),ustrip(W))
+
+simulator = ABCSimulator(sigma=sigma*u" Å", W=W*u"eV", 
+                         max_steps=100, max_steps_minimize=30, step_size_minimize=5e-3u"ps", tol=1e-3u"eV/Å")
+
+simulate!(molly_system, simulator, eamJulia, n_threads=1, 
+         #   fname="output_stress_cube8.txt", fname_dump="stress_cube8.dump", fname_min_dump="min_stress_cube8.dump",
+         fname="test.txt", fname_dump="test.dump", fname_min_dump="test.dump", # for speed test
+         neig_interval=30, loggers_interval=10, dump_interval=10, start_dump=0,
+         minimize_only=false, 
+         d_boost=1e-6u"Å", 
+         frozen_atoms=frozen_atoms, nopenalty_atoms=nopenalty_atoms, 
+         p_drop = 1-1/32, p_keep=0, n_memory=0, n_search=100,
+         p_stress = 1-192/7180, n_stress=12)
 ```
 
-**Outputs:**
-
+## Benchmarks on energy and forces calculations
 ```bash
 Calculating potential energy using ASE EAM calculator
   0.095757 seconds (1.43 M allocations: 66.707 MiB, 40.00% gc time)
@@ -154,170 +188,3 @@ time/atom/step by my EAM calculator: 4.7440777693101735e-6 seconds
 ```
 
 Tested on an AMD EPYC 9334 2.7 GHz CPU on `analysis.sns.gov` cluster. For reference, the serial LAMMPS EAM calculator takes 1.85e-6 CPU seconds per atom per step for energy calculation on 3.47 GHz Intel Xeon processors. ([reference](frozen_atoms))
-
-### `lammpsIO.jl`: Read/Write LAMMPS dump file
-
-**Example:**
-```julia
-# Read dump file and create molly system
-filename_dump = "./test.dump"
-n_atoms, box_size, coords_molly = lmpDumpReader(filename_dump)
-molly_atoms = [Molly.Atom(index=i, charge=0, mass=atom_mass) for i in 1:length(coords_molly)]
-boundary_condition = Molly.CubicBoundary(box_size[1],box_size[2],box_size[3])
-
-# Write dump file during simulation
-fname_dump = "./test_out.dump"
-open(fname_dump, "w") do file
-    write(file, "")
-end
-
-open(fname_dump, "w") do file
-    for step_n in 1:n_steps
-    
-        #####################
-        # Update trajectory #
-        #####################
-    
-        if step_n >= start_dump
-            if step_n % dump_inteval == 0
-                lmpDumpWriter(file,step_n,molly_system,fname_dump)
-            end
-        end
-    end
-end
-```
-
----
-
-## `EAM/`: Incorporating the EAM forcefield to benchmark the Al adatom toy model
-### `test_MD.ipynb`: A fundamental verification of the current Julia simulation code to ensure all basic components are functioning correctly.
-https://hackmd.io/MAK4jYY2SqqeRpFzVath-A?both
-#### Modifications
-- Modified the Julia ABC simulator for MD simulation by:
-  - Removing the penalty function.
-  - Employing the Velocity Verlet algorithm.
-  - MB-Random velocity generator.
-#### Benchmark Procedure
-1. **Initialization**: Start from an FCC crystal Al and randomly assign velocities following the Maxwell-Boltzmann distribution at 2000K.
-2. **Volume Adjustment**: Run for 50,000 steps (20 ps) in NPT ensemble.
-3. **Reset Velocity**: Randomly assign velocities following the Maxwell-Boltzmann distribution at 2000K.
-4. **Equilibration**: Run for 20,000 steps (20 ps) in NVE. The result temperature fluctuates around 1200K (melting temperature of Al is 933.47K).
-5. **Trajectory Collection**: Collect trajectory data for 10,000 steps after equilibration to calculate Mean Squared Displacement (MSD).
-![image](https://hackmd.io/_uploads/H1A-bxWcC.png)
-![test_Julia_MD](https://hackmd.io/_uploads/ByNCIgbqR.gif)
-Example: Particle motion at 140K for 0.2ps
-
-### `test_ABC_J_vacancy.ipynb`: Developing the ABC code and verify its accuracy by checking the vacancy migration energy in aluminum
-![image](https://hackmd.io/_uploads/H18xrcMqR.png)
-
-![test_Al_vacancy](https://github.com/user-attachments/assets/e012e5f2-ba05-49de-b502-6369fe3f4646)
-
-
-### `test_ABC_J.ipynb`: The pure Julia based ABC simulator function, calls `/src/juliaEAM.jl` for evaluating the EAM interaction
-
-Updates: 
-
-Ongoing
-- [ ] Asymmetrical penalty
-- [ ] Using ABC to study vacancy diffusion problem
-- [ ] Improving visualization
-
-Done
-- [x] Assigning the penalty energy only on focused particles
-- [x] Using energy difference as termination condition in minimization algorithm
-- [x] FIRE algorithm and MD-downhill energyminimization
-- [x] Slightly distort BC to create asymmetry
-- [x] Pre-evaluating the gradient of Gaussian penalty for efficiency
-- [x] Truncating the penalty function to $3 \sigma$
-- [x] Setting intervals between neighbor list identification for improved efficiency
-- [x] Pushing the system slightly before minimization to prevent trapping on flat top PEL
-- [x] Fixed PBC issues on calculating Gaussian penalty
-
-Failed
-- [x] ~~Using momentum gradient descent algorithm for structural relaxation~~
-- [x] ~~Not updating structure if force does not converge~~
-
----
-
-### Previous testings
-
-### `test_minimize.ipynb`: Integrating the EAM forcefield for metallic element interactions from the Python [ASE](https://gitlab.com/ase/ase) package into the Molly system/simulator framework
-
-![EAM](https://github.com/ch-tung/ABCD_J/blob/d94d2efdf2ac7988aea6161c3682c5a385521688/EAM.png?raw=true)
-
----
-
-### `test_JuliaEAM.ipynb`: Calculating EAM interactions using Julia
-
-![JuliaEAM](https://github.com/ch-tung/ABCD_J/blob/389a2293c5a2f5351905167a624ee9843e1ae479/JuliaEAM.png?raw=true)
-
----
-
-### `test_ABC.ipynb`: Defining a custom ABC simulator function
-
-![ABC](https://github.com/ch-tung/ABCD_J/blob/7fe5081cf97966e08ad64c2363283cd5736bd206/ABC.png?raw=true)
-
-#### Constructor for ABCSimulator
-
-```julia
-ABCSimulator(; sigma=0.01*u"nm", W=1e-2*u"eV", max_steps=100, max_steps_minimize=100, step_size_minimize=0.01*u"nm", tol=1e-10*u"kg*m*s^-2", log_stream=devnull)
-```
-
-**Arguments:**
-
-*   `sigma`: The value of sigma in units of nm.
-*   `W`: The value of W in units of eV.
-*   `max_steps`: The maximum number of steps for the simulator.
-*   `max_steps_minimize`: The maximum number of steps for the minimizer.
-*   `step_size_minimize`: The step size for the minimizer in units of nm.
-*   `tol`: The tolerance for convergence in units of kg\*m\*s^-2.
-*   `log_stream`: The stream to log the output.
-
-#### Simulates the system using the `ABCSimulator`
-
-```julia
-simulate!(sys, sim::ABCSimulator; n_threads::Integer=Threads.nthreads(), frozen_atoms=[], run_loggers=true, fname="output.txt")
-```
-
-**Arguments:**
-
-*   `sys`: The system to be simulated.
-*   `sim`: An instance of the ABCSimulator.
-*   `n_threads`: The number of threads to use for parallel execution. Defaults to the number of available threads.
-*   `frozen_atoms`: A list of atoms that should be frozen during the simulation.
-*   `run_loggers`: A boolean indicating whether to run the loggers during the simulation.
-*   `fname`: The name of the output file.
-
-**Example:**
-
-```julia
-molly_system = initialize_system()
-
-# 1. Start from an energy minimum
-simulator = SteepestDescentMinimizer(step_size=1e-3*u"nm", tol=1e-12*u"kg*m*s^-2", log_stream=devnull)
-Molly.simulate!(molly_system, simulator)
-atoms_ase_sim = convert_ase_custom(molly_system)
-println(AtomsCalculators.potential_energy(pyconvert(AbstractSystem, atoms_ase_sim), eam_cal))
-
-# 2. Specify the atoms to be frozen
-z_coords = [coords[3] for coords in molly_system.coords]
-frozen_atoms = [index for (index, z_coord) in enumerate(z_coords) if z_coord < al_LatConst*2.9*0.1*u"nm"]
-println(length(frozen_atoms))
-
-# 3. Run ABCSimulator
-sigma = 2e-3
-W = 0.1
-@printf("sigma = %e nm/dof^1/2\n W = %e eV", ustrip(sigma), ustrip(W))
-simulator = ABCSimulator(sigma=sigma*u"nm", W=W*u"eV", max_steps=100, max_steps_minimize=60, step_size_minimize=1.5e-3*u"nm", tol=1e-12*u"kg*m*s^-2")
-simulate!(molly_system, simulator, n_threads=1, fname="output_test.txt", frozen_atoms=frozen_atoms)
-
-# 4. Visualize
-using GLMakie
-color_0 = :blue
-color_1 = :red
-colors = [index < length(molly_system.coords) ? color_0 : color_1 for (index, value) in enumerate(molly_system.coords)]
-visualize(molly_system.loggers.coords, boundary_condition, "test.mp4", markersize=0.1, color=colors)
-```
-
-![PE](https://github.com/ch-tung/ABCD_J/blob/main/PE_steps.png?raw=true)  
-Penalty energy can gradually push the configuration out of its initial energy minimum. The potential energy gradually saturating before a steep drop. Once passing the saddle point, the penalty term essentially becomes zero. The unreasonable results for steps over 700 were due to incorrect penalty force calculations in PBC, which are easy to fix.

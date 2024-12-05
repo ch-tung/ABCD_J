@@ -142,6 +142,19 @@ function Molly.forces(sys::System, interaction::EAMInteractionJulia, penalty_coo
     return fs
 end
 
+# function Molly.forces(sys::System, interaction::EAMInteractionJulia, penalty_coords, sigma::typeof(1.0u"Å"), W::typeof(1.0u"eV"), neighbors_all::Vector{Vector{Int}};
+#     n_threads::Integer=Threads.nthreads(), nopenalty_atoms=[]) 
+    
+#     fs = interaction.f_forces(sys, interaction.pair_coeff_string)
+
+#     # Add penalty term to forces
+#     if penalty_coords != nothing
+#         fs += penalty_forces(sys, penalty_coords, sigma, W, nopenalty_atoms=nopenalty_atoms) # ev/Å
+#         # print(maximum(norm.(penalty_forces(sys, penalty_coords, sigma, W))),"\n")
+#     end
+#     return fs
+# end
+
 """
 f_energy_phi(sys::System, sim::Simulator, penalty_coords)
 
@@ -187,7 +200,7 @@ Minimizes the system using the Fast Inertial Relaxation Engine (FIRE) algorithm.
 - `alpha::Float64`: The parameter controlling the step size. Default is 0.99.
 """
 
-include("minimize.jl")
+include("./minimize.jl")
 
 # Implement the simulate! function for ABCSimulator
 """
@@ -238,7 +251,7 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                    d_boost=1.0e-2u"Å", beta=0.0, E_th = sim.W*exp(-3),
                    frozen_atoms=[], nopenalty_atoms=[],
                    p_drop::Float64=0.0, p_keep=0.5, drop_interval::Int=1, n_memory::Int=50, n_search::Int=60,
-                   p_stress::Float64=1e-2)
+                   p_stress::Float64=1e-2, n_stress=12)
     N = length(sys.coords)
     neighbors_all = get_neighbors_all(sys)
     neighbors = find_neighbors(sys, sys.neighbor_finder; n_threads=n_threads)
@@ -301,10 +314,13 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
     # Select the particles with the top von Mises stress
     n_top = round(Int, p_stress*N)
     nopenalty_atoms_stress = sorted_indices[1:n_top]
+    nopenalty_atoms_stress_append = rand(sorted_indices[n_top:N], N-n_top-n_stress)
+    nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, nopenalty_atoms_stress_append)
+    nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, frozen_atoms)
 
     p = Progress(sim.max_steps, 10)
     step_counter = 0
-    dr = sys.coords*0
+    # dr = sys.coords*0
 
     for step_n in 1:sim.max_steps
         step_counter += 1
@@ -317,7 +333,7 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
 
         ## 3. Call Minimize! with penalty_coords, update system coordinates
         ## energy before minimization
-        coords_before = copy(sys.coords)
+        # coords_before = copy(sys.coords)
         sys_prev = deepcopy(sys)
 
         ## run the minimization algorithm
@@ -350,7 +366,7 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                 ## energy after minimization
                 E = interaction.f_energy(interaction.calculator, sys, neighbors_all)
                 E_phi = f_phi_p(sys.coords, penalty_coords, sim.sigma, sim.W, nopenalty_atoms=nopenalty_atoms_stress)
-                E_after = E+E_phi
+                # E_after = E+E_phi
 
                 ## write energy and penalty energy to text file
                 open(fname, "a") do file_E
@@ -396,6 +412,9 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                 # Select the particles with the top von Mises stress
                 n_top = round(Int, p_stress*N)
                 nopenalty_atoms_stress = sorted_indices[1:n_top]
+                nopenalty_atoms_stress_append = rand(sorted_indices[n_top:N], N-n_top-n_stress)
+                nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, nopenalty_atoms_stress_append)
+                nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, frozen_atoms)
 
                 continue
             end

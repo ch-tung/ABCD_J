@@ -22,6 +22,7 @@ using Zygote
 using LinearAlgebra
 import Interpolations:cubic_spline_interpolation, linear_interpolation, interpolate, BSpline, Cubic, scale, Line, OnGrid, extrapolate, Gridded, extrapolate, Flat
 using DelimitedFiles
+using LAMMPS
 
 # 1. Define interaction
 # Helper function to get the type of a Interpolation object
@@ -477,6 +478,54 @@ function calculate_forces(eam::EAM, coords::Vector{SVector{3, Float64}}, boundar
     end
 
     return [SVector{3,Float64}(forces_particle[idx_f,:]) for idx_f in 1:size(forces_particle)[1]]*u"eV/Å"
+end
+
+function calculate_forces_LAMMPS(sys::System, pair_coeff_string::String)
+    # Create a LAMMPS instance
+    lmp = LMP(["-screen","none"])
+
+    # Define the atom style
+    command(lmp, "units metal")
+    command(lmp, "dimension 3")
+    command(lmp, "boundary p p p")
+    command(lmp, "atom_style atomic")
+
+    # Define the simulation box according to sys.boundary
+    boundary = sys.boundary
+    box_x = ustrip(boundary[1])
+    box_y = ustrip(boundary[2])
+    box_z = ustrip(boundary[3])
+    command(lmp, "region box block 0 $(box_x) 0 $(box_y) 0 $(box_z)")
+    command(lmp, "create_box 1 box")
+
+    # Get atom positions, indices and types
+    ustripped_coords = map(ustrip, sys.coords)
+    pos = convert(Matrix, (reshape(reinterpret(Float64, ustripped_coords), 3, :)))
+    types = map(atoms_data -> parse(Int32, atoms_data.atom_type), sys.atoms_data)
+    indices = map(atoms -> Int32(atoms.index), sys.atoms)
+
+    # Create atoms in LAMMPS
+    LAMMPS.create_atoms(lmp, pos, indices, types)
+
+    # Set atom type and mass
+    command(lmp, "mass 1 26.9815")
+
+    # Define interatomic potential
+    command(lmp, "pair_style eam/alloy")
+    command(lmp, pair_coeff_string)
+
+    # Compute force 
+    command(lmp, "compute f all property/atom fx fy fz")
+
+    command(lmp, "run 0")
+
+    f = gather(lmp, "c_f", Float64)
+    LAMMPS.close!(lmp)
+
+    f_transposed = transpose(f)
+    f_converted = [SVector{3, typeof(1.0u"eV/Å")}(f_transposed[i, :] * 1.0u"eV/Å"...) for i in 1:size(f_transposed, 1)]
+
+    return f_converted
 end
 
 """

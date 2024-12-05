@@ -314,7 +314,7 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
     # Select the particles with the top von Mises stress
     n_top = round(Int, p_stress*N)
     nopenalty_atoms_stress = sorted_indices[1:n_top]
-    nopenalty_atoms_stress_append = rand(n_top:N, N-n_stress-n_top)
+    nopenalty_atoms_stress_append = rand(sorted_indices[n_top:N], N-n_top-n_stress)
     nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, nopenalty_atoms_stress_append)
     nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, frozen_atoms)
 
@@ -412,7 +412,7 @@ function simulate!(sys::System, sim::ABCSimulator, interaction::EAMInteractionJu
                 # Select the particles with the top von Mises stress
                 n_top = round(Int, p_stress*N)
                 nopenalty_atoms_stress = sorted_indices[1:n_top]
-                nopenalty_atoms_stress_append = rand(n_top:N, N-n_stress-n_top)
+                nopenalty_atoms_stress_append = rand(sorted_indices[n_top:N], N-n_top-n_stress)
                 nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, nopenalty_atoms_stress_append)
                 nopenalty_atoms_stress = vcat(nopenalty_atoms_stress, frozen_atoms)
 
